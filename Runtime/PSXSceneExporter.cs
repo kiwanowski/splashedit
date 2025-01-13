@@ -3,7 +3,7 @@ using UnityEngine.SceneManagement;
 
 namespace PSXSplash.RuntimeCode
 {
-    public class PSXSceneExporter : MonoBehaviour
+  public class PSXSceneExporter : MonoBehaviour
   {
     public void Export()
     {

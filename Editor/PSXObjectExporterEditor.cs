@@ -17,7 +17,7 @@ namespace PSXSplash.EditorCode
             EditorGUILayout.PropertyField(serializedObject.FindProperty("Mesh"));
             if (GUILayout.Button("Export mesh"))
             {
-                comp.Mesh.Export();
+                comp.Mesh.Export(comp.gameObject);
             }
             EditorGUILayout.EndVertical();
 
@@ -26,7 +26,7 @@ namespace PSXSplash.EditorCode
             EditorGUILayout.PropertyField(serializedObject.FindProperty("Texture"));
             if (GUILayout.Button("Export texture"))
             {
-                comp.Texture.Export();
+                comp.Texture.Export(comp.gameObject);
             }
             EditorGUILayout.EndVertical();
 
