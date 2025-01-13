@@ -1,10 +1,9 @@
-using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-namespace PSXSplash.Runtime
+namespace PSXSplash.RuntimeCode
 {
-  public class PSXSceneExporter : MonoBehaviour
+    public class PSXSceneExporter : MonoBehaviour
   {
     public void Export()
     {

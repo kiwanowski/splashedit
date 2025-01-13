@@ -1,19 +1,37 @@
 using UnityEngine;
 using UnityEditor;
-using PSXSplash.Runtime;
+using PSXSplash.RuntimeCode;
 
-[CustomEditor(typeof(PSXObjectExporter))]
-public class PSXObjectExporterEditor : Editor
+namespace PSXSplash.EditorCode
 {
-    public override void OnInspectorGUI()
-    {
-        base.OnInspectorGUI();
-        DrawDefaultInspector();
 
-        PSXObjectExporter comp = (PSXObjectExporter)target;
-        if (GUILayout.Button("Export"))
+    [CustomEditor(typeof(PSXObjectExporter))]
+    public class PSXObjectExporterEditor : Editor
+    {
+        public override void OnInspectorGUI()
         {
-            comp.Export();
+            PSXObjectExporter comp = (PSXObjectExporter)target;
+            serializedObject.Update();
+
+            EditorGUILayout.BeginVertical("box");
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("Mesh"));
+            if (GUILayout.Button("Export mesh"))
+            {
+                comp.Mesh.Export();
+            }
+            EditorGUILayout.EndVertical();
+
+
+            EditorGUILayout.BeginVertical("box");
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("Texture"));
+            if (GUILayout.Button("Export texture"))
+            {
+                comp.Texture.Export();
+            }
+            EditorGUILayout.EndVertical();
+
+            serializedObject.ApplyModifiedProperties();
+
         }
     }
 }

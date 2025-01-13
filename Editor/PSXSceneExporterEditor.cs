@@ -1,11 +1,10 @@
 using UnityEngine;
 using UnityEditor;
-using PSXSplash.Runtime;
+using PSXSplash.RuntimeCode;
 
 [CustomEditor(typeof(PSXSceneExporter))]
 public class PSXSceneExporterEditor : Editor {
     public override void OnInspectorGUI() {
-        base.OnInspectorGUI();
         DrawDefaultInspector();
         
         PSXSceneExporter comp = (PSXSceneExporter)target;
