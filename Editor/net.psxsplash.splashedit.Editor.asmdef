@@ -1,0 +1,16 @@
+{
+    "name": "net.psxplash.splashedit.Editor",
+    "rootNamespace": "",
+    "references": [
+        "net.psxsplash.splashedit.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
