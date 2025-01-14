@@ -27,6 +27,8 @@ namespace PSXSplash.RuntimeCode
         [Range(1, 256)]
         public int Height = 128;
 
+        public int MaxKMeans = 50;
+
 
 
         public ushort[] ExportTexture(GameObject gameObject)
@@ -49,7 +51,7 @@ namespace PSXSplash.RuntimeCode
                     }
                     else
                     {
-                        var (indexedPixels, _) = ImageQuantizer.Quantize(newTexture, (int)TextureType, 100);
+                        var (indexedPixels, _) = ImageQuantizer.Quantize(newTexture, (int)TextureType, MaxKMeans);
                         return indexedPixels;
                     }
 
@@ -77,7 +79,7 @@ namespace PSXSplash.RuntimeCode
                     }
                     else
                     {
-                        var (_, generatedClut) = ImageQuantizer.Quantize(newTexture, (int)TextureType, 100);
+                        var (_, generatedClut) = ImageQuantizer.Quantize(newTexture, (int)TextureType, MaxKMeans);
                         return generatedClut;
                     }
 
