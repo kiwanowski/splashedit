@@ -1,19 +1,17 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+using Random = UnityEngine.Random;
 
 public class ImageQuantizer
 {
-    /// <summary>
-    /// Quantizes a texture and outputs a 3D pixel array.
-    /// </summary>
-    /// <param name="image">The input texture.</param>
-    /// <param name="maxColors">The maximum number of colors in the quantized image.</param>
-    /// <param name="maxIterations">The maximum number of iterations for the k-means algorithm.</param>
-    /// <returns>A tuple containing a 3D pixel array and the color lookup table.</returns>
-    public static (float[,,], Vector3[,]) Quantize(Texture2D image, int maxColors, int maxIterations = 10)
+
+    public static (ushort[], float[]) Quantize(Texture2D image, int bpp, int maxIterations = 10)
     {
         int width = image.width;
         int height = image.height;
+
+        int maxColors = (int)Math.Pow(bpp, 2);
 
         List<Vector3> centroids = InitializeCentroids(image, maxColors);
 
@@ -24,17 +22,16 @@ public class ImageQuantizer
             pixelColors[i] = new Vector3(pixels[i].r, pixels[i].g, pixels[i].b);
         }
 
-        // Storage for pixel-to-centroid assignments
-        int[] assignments = new int[pixelColors.Length];
+        ushort[] assignments = new ushort[pixelColors.Length];
 
+        // Perform k-means clustering
         for (int iteration = 0; iteration < maxIterations; iteration++)
         {
             bool centroidsChanged = false;
 
-            // Step 1: Assign each pixel to the closest centroid
             for (int i = 0; i < pixelColors.Length; i++)
             {
-                int closestCentroid = GetClosestCentroid(pixelColors[i], centroids);
+                ushort closestCentroid = (ushort)GetClosestCentroid(pixelColors[i], centroids);
                 if (assignments[i] != closestCentroid)
                 {
                     assignments[i] = closestCentroid;
@@ -42,7 +39,6 @@ public class ImageQuantizer
                 }
             }
 
-            // Step 2: Recalculate centroids
             Vector3[] newCentroids = new Vector3[centroids.Count];
             int[] centroidCounts = new int[centroids.Count];
 
@@ -70,23 +66,59 @@ public class ImageQuantizer
             centroids = new List<Vector3>(newCentroids);
         }
 
-        float[,,] pixelArray = new float[width, height, 3];
+        int pixelSize = bpp == 4 ? 4 : bpp == 8 ? 2 : 1;  
+        int adjustedWidth = width / pixelSize;  
+        ushort[] pixelArray = new ushort[adjustedWidth * height];  
+
+        ushort packIndex = 0;  
+        int bitShift = 0;   
+
         for (int i = 0; i < pixelColors.Length; i++)
         {
-            int x = i % width;
-            int y = i / width;
+            ushort centroidIndex = assignments[i]; 
 
-            Vector3 centroidColor = centroids[assignments[i]];
-            pixelArray[x, y, 0] = centroidColor.x; // Red
-            pixelArray[x, y, 1] = centroidColor.y; // Green
-            pixelArray[x, y, 2] = centroidColor.z; // Blue
+            // For 4bpp, we need to pack 4 indices into a single integer
+            if (bpp == 4)
+            {
+                pixelArray[packIndex] |= (ushort)(centroidIndex << (bitShift * 4));  // Shift by 4 bits for each index
+                bitShift++;
+
+                // Every 4 indices, move to the next position in the pixelArray
+                if (bitShift == 4)
+                {
+                    bitShift = 0;
+                    packIndex++;
+                }
+            }
+            // For 8bpp, we need to pack 2 indices into a single integer
+            else if (bpp == 8)
+            {
+                pixelArray[packIndex] |= (ushort)(centroidIndex << (bitShift * 8));  // Shift by 8 bits for each index
+                bitShift++;
+
+                // Every 2 indices, move to the next position in the pixelArray
+                if (bitShift == 2)
+                {
+                    bitShift = 0;
+                    packIndex++;
+                }
+            }
+            // For 15bpp, just place each index directly (no packing)
+            else
+            {
+                pixelArray[packIndex] = centroidIndex;
+                packIndex++;
+            }
         }
 
+        // Create the CLUT as a 1D array of RGB values
         int actualColors = centroids.Count;
-        Vector3[,] clut = new Vector3[actualColors, 1];
+        float[] clut = new float[actualColors * 3];
         for (int i = 0; i < actualColors; i++)
         {
-            clut[i, 0] = centroids[i];
+            clut[i * 3 + 0] = centroids[i].x; // Red
+            clut[i * 3 + 1] = centroids[i].y; // Green
+            clut[i * 3 + 2] = centroids[i].z; // Blue
         }
 
         return (pixelArray, clut);
