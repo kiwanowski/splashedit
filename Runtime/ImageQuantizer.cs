@@ -6,7 +6,7 @@ using Random = UnityEngine.Random;
 public class ImageQuantizer
 {
 
-    public static (ushort[], float[]) Quantize(Texture2D image, int bpp, int maxIterations = 10)
+    public static (ushort[], ushort[]) Quantize(Texture2D image, int bpp, int maxIterations = 10)
     {
         int width = image.width;
         int height = image.height;
@@ -66,63 +66,68 @@ public class ImageQuantizer
             centroids = new List<Vector3>(newCentroids);
         }
 
-        int pixelSize = bpp == 4 ? 4 : bpp == 8 ? 2 : 1;  
-        int adjustedWidth = width / pixelSize;  
-        ushort[] pixelArray = new ushort[adjustedWidth * height];  
+        int pixelSize = bpp == 4 ? 4 : bpp == 8 ? 2 : 1;
+        int adjustedWidth = width / pixelSize;
+        ushort[] pixelArray = new ushort[adjustedWidth * height];
 
-        ushort packIndex = 0;  
-        int bitShift = 0;   
+        ushort packIndex = 0;
+        int bitShift = 0;
 
-        for (int i = 0; i < pixelColors.Length; i++)
+        // Loop through pixels and pack the data, flipping along the Y-axis
+        for (int y = height - 1; y >= 0; y--)
         {
-            ushort centroidIndex = assignments[i]; 
-
-            // For 4bpp, we need to pack 4 indices into a single integer
-            if (bpp == 4)
+            for (int x = 0; x < width; x++)
             {
-                pixelArray[packIndex] |= (ushort)(centroidIndex << (bitShift * 4));  // Shift by 4 bits for each index
-                bitShift++;
+                int pixelIndex = y * width + x;
+                ushort centroidIndex = assignments[pixelIndex];
 
-                // Every 4 indices, move to the next position in the pixelArray
-                if (bitShift == 4)
+                // For 4bpp, we need to pack 4 indices into a single integer
+                if (bpp == 4)
                 {
-                    bitShift = 0;
+                    pixelArray[packIndex] |= (ushort)(centroidIndex << (bitShift * 4));
+                    bitShift++;
+
+                    if (bitShift == 4)
+                    {
+                        bitShift = 0;
+                        packIndex++;
+                    }
+                }
+                // For 8bpp, we need to pack 2 indices into a single integer
+                else if (bpp == 8)
+                {
+                    pixelArray[packIndex] |= (ushort)(centroidIndex << (bitShift * 8));
+                    bitShift++;
+
+                    if (bitShift == 2)
+                    {
+                        bitShift = 0;
+                        packIndex++;
+                    }
+                }
+                // For 15bpp, just place each index directly (no packing)
+                else
+                {
+                    pixelArray[packIndex] = centroidIndex;
                     packIndex++;
                 }
-            }
-            // For 8bpp, we need to pack 2 indices into a single integer
-            else if (bpp == 8)
-            {
-                pixelArray[packIndex] |= (ushort)(centroidIndex << (bitShift * 8));  // Shift by 8 bits for each index
-                bitShift++;
-
-                // Every 2 indices, move to the next position in the pixelArray
-                if (bitShift == 2)
-                {
-                    bitShift = 0;
-                    packIndex++;
-                }
-            }
-            // For 15bpp, just place each index directly (no packing)
-            else
-            {
-                pixelArray[packIndex] = centroidIndex;
-                packIndex++;
             }
         }
 
-        // Create the CLUT as a 1D array of RGB values
         int actualColors = centroids.Count;
-        float[] clut = new float[actualColors * 3];
+        ushort[] clut = new ushort[actualColors];
         for (int i = 0; i < actualColors; i++)
         {
-            clut[i * 3 + 0] = centroids[i].x; // Red
-            clut[i * 3 + 1] = centroids[i].y; // Green
-            clut[i * 3 + 2] = centroids[i].z; // Blue
+            int red = Mathf.Clamp(Mathf.RoundToInt(centroids[i].x * 31), 0, 31); // 5 bits
+            int green = Mathf.Clamp(Mathf.RoundToInt(centroids[i].y * 31), 0, 31); // 5 bits
+            int blue = Mathf.Clamp(Mathf.RoundToInt(centroids[i].z * 31), 0, 31); // 5 bits
+
+            clut[i] = (ushort)((blue << 10) | (green << 5) | red);
         }
 
         return (pixelArray, clut);
     }
+
 
     private static List<Vector3> InitializeCentroids(Texture2D image, int maxColors)
     {
