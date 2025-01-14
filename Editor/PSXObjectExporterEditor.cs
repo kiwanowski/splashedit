@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 using PSXSplash.RuntimeCode;
+using System.IO;
 
 namespace PSXSplash.EditorCode
 {
@@ -18,6 +19,7 @@ namespace PSXSplash.EditorCode
             if (GUILayout.Button("Export mesh"))
             {
                 comp.Mesh.Export(comp.gameObject);
+                GUIUtility.ExitGUI();
             }
             EditorGUILayout.EndVertical();
 
@@ -26,7 +28,53 @@ namespace PSXSplash.EditorCode
             EditorGUILayout.PropertyField(serializedObject.FindProperty("Texture"));
             if (GUILayout.Button("Export texture"))
             {
-                comp.Texture.Export(comp.gameObject);
+                ushort[] textureData = comp.Texture.ExportTexture(comp.gameObject);
+                string path = EditorUtility.SaveFilePanel(
+                    "Save texture data",
+                    "",
+                    "texture_data",
+                    "bin"
+                );
+
+                if (!string.IsNullOrEmpty(path))
+                {
+                    using (FileStream fileStream = new FileStream(path, FileMode.Create, FileAccess.Write))
+                    using (BinaryWriter writer = new BinaryWriter(fileStream))
+                    {
+                        foreach (ushort value in textureData)
+                        {
+                            writer.Write(value);
+                        }
+                    }
+                }
+                GUIUtility.ExitGUI();
+            }
+
+            if (comp.Texture.TextureType != PSXTextureType.TEX16_BPP)
+            {
+                if (GUILayout.Button("Export clut"))
+                {
+                    ushort[] clutData = comp.Texture.ExportClut(comp.gameObject);
+                    string path = EditorUtility.SaveFilePanel(
+                    "Save clut data",
+                    "",
+                    "clut_data",
+                    "bin"
+                );
+
+                if (!string.IsNullOrEmpty(path))
+                {
+                    using (FileStream fileStream = new FileStream(path, FileMode.Create, FileAccess.Write))
+                    using (BinaryWriter writer = new BinaryWriter(fileStream))
+                    {
+                        foreach (ushort value in clutData)
+                        {
+                            writer.Write(value);
+                        }
+                    }
+                }
+                    GUIUtility.ExitGUI();
+                }
             }
             EditorGUILayout.EndVertical();
 

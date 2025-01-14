@@ -1,4 +1,5 @@
 using System.IO;
+using PSXSplash.RuntimeCode;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -78,10 +79,10 @@ public class QuantizedPreviewWindow : EditorWindow
 
         if (indexedPixelData != null)
         {
-            if (GUILayout.Button("Export pixel data"))
+            if (GUILayout.Button("Export texute data"))
             {
                 string path = EditorUtility.SaveFilePanel(
-                    "Save pixel data",
+                    "Save texture data",
                     "",
                     "pixel_data",
                     "bin"
@@ -129,13 +130,14 @@ public class QuantizedPreviewWindow : EditorWindow
 
     private void GenerateQuantizedPreview()
     {
-        Texture2D resizedTexture = ResizeTexture(originalTexture, targetWidth, targetHeight);
+        Texture2D resizedTexture = PSXTexture.ResizeTexture(originalTexture, targetWidth, targetHeight);
 
         if (bpp == 16)
         {
-            quantizedTexture = ConvertTo16Bpp(resizedTexture);
+            quantizedTexture = null;
+            indexedPixelData = PSXTexture.ConvertTo16Bpp(resizedTexture);
             clut = null;
-            vramTexture = resizedTexture;
+            vramTexture = ConvertTo16BppTexture2D(resizedTexture);
         }
         else
         {
@@ -153,7 +155,7 @@ public class QuantizedPreviewWindow : EditorWindow
             {
                 for (int x = 0; x < resizedTexture.width; x++)
                 {
-                    int index = 0;
+                    int index;
 
                     if (pixelSize == 4)
                     {
@@ -231,34 +233,6 @@ public class QuantizedPreviewWindow : EditorWindow
         return vramTexture;
     }
 
-
-
-    private Texture2D ConvertTo16Bpp(Texture2D source)
-    {
-        int width = source.width;
-        int height = source.height;
-        Texture2D convertedTexture = new Texture2D(width, height);
-
-        Color[] originalPixels = source.GetPixels();
-        Color[] convertedPixels = new Color[originalPixels.Length];
-
-        for (int i = 0; i < originalPixels.Length; i++)
-        {
-            Color pixel = originalPixels[i];
-
-            float r = Mathf.Floor(pixel.r * 31) / 31.0f; // 5 bits for red
-            float g = Mathf.Floor(pixel.g * 31) / 31.0f; // 5 bits for green
-            float b = Mathf.Floor(pixel.b * 31) / 31.0f; // 5 bits for blue
-
-            convertedPixels[i] = new Color(r, g, b, pixel.a);
-        }
-
-        convertedTexture.SetPixels(convertedPixels);
-        convertedTexture.Apply();
-
-        return convertedTexture;
-    }
-
     private void DrawTexturePreview(Texture2D texture, int size, bool flipY = true)
     {
         Rect rect = GUILayoutUtility.GetRect(size, size, GUILayout.ExpandWidth(false));
@@ -328,21 +302,35 @@ public class QuantizedPreviewWindow : EditorWindow
         }
     }
 
+    private Texture2D ConvertTo16BppTexture2D(Texture2D source)
+{
+    int width = source.width;
+    int height = source.height;
+    Texture2D convertedTexture = new Texture2D(width, height);
 
-    private Texture2D ResizeTexture(Texture2D source, int newWidth, int newHeight)
+    Color[] originalPixels = source.GetPixels();
+    Color[] convertedPixels = new Color[originalPixels.Length];
+
+    for (int y = 0; y < height; y++)
     {
-        RenderTexture rt = RenderTexture.GetTemporary(newWidth, newHeight);
-        rt.antiAliasing = 1;
-        Graphics.Blit(source, rt);
+        for (int x = 0; x < width; x++)
+        {
+            int flippedY = height - y - 1;
 
-        Texture2D resizedTexture = new Texture2D(newWidth, newHeight);
-        RenderTexture.active = rt;
-        resizedTexture.ReadPixels(new Rect(0, 0, newWidth, newHeight), 0, 0);
-        resizedTexture.Apply();
+            Color pixel = originalPixels[flippedY * width + x];
 
-        RenderTexture.active = null;
-        RenderTexture.ReleaseTemporary(rt);
+            float r = Mathf.Floor(pixel.r * 31) / 31.0f; // 5 bits for red
+            float g = Mathf.Floor(pixel.g * 31) / 31.0f; // 5 bits for green
+            float b = Mathf.Floor(pixel.b * 31) / 31.0f; // 5 bits for blue
 
-        return resizedTexture;
+            convertedPixels[y * width + x] = new Color(r, g, b, pixel.a);
+        }
     }
+
+    convertedTexture.SetPixels(convertedPixels);
+    convertedTexture.Apply();
+
+    return convertedTexture;
+}
+
 }
