@@ -82,8 +82,9 @@ public class ImageQuantizer
             pixelArray[x, y, 2] = centroidColor.z; // Blue
         }
 
-        Vector3[,] clut = new Vector3[maxColors, 1];
-        for (int i = 0; i < centroids.Count; i++)
+        int actualColors = centroids.Count;
+        Vector3[,] clut = new Vector3[actualColors, 1];
+        for (int i = 0; i < actualColors; i++)
         {
             clut[i, 0] = centroids[i];
         }

@@ -2,6 +2,8 @@ using UnityEditor;
 using UnityEngine;
 using PSXSplash.RuntimeCode;
 using UnityEngine.Rendering;
+using System.Threading.Tasks;
+using UnityEditor.PackageManager.UI;
 
 public class QuantizedPreviewWindow : EditorWindow
 {
@@ -14,10 +16,12 @@ public class QuantizedPreviewWindow : EditorWindow
     private int targetHeight = 128;
     private int previewSize = 256;
 
+
     [MenuItem("Window/Quantized Preview")]
     public static void ShowWindow()
     {
-        GetWindow<QuantizedPreviewWindow>("Quantized Preview");
+        QuantizedPreviewWindow win = GetWindow<QuantizedPreviewWindow>("Quantized Preview");
+        win.minSize = new Vector2(800, 700);
     }
 
     private void OnGUI()
@@ -29,31 +33,39 @@ public class QuantizedPreviewWindow : EditorWindow
         targetWidth = EditorGUILayout.IntField("Target Width", targetWidth);
         targetHeight = EditorGUILayout.IntField("Target Height", targetHeight);
 
-        bpp = EditorGUILayout.IntPopup("Bits Per Pixel", bpp, new[] { "4 bpp", "8 bpp" }, new[] { 4, 8 });
+        bpp = EditorGUILayout.IntPopup("Bits Per Pixel", bpp, new[] { "4 bpp", "8 bpp", "15 bpp" }, new[] { 4, 8, 15 });
 
         if (GUILayout.Button("Generate Quantized Preview") && originalTexture != null)
         {
             GenerateQuantizedPreview();
         }
 
+        GUILayout.BeginHorizontal();
+
         if (originalTexture != null)
         {
+            GUILayout.BeginVertical();
             GUILayout.Label("Original Texture");
             DrawTexturePreview(originalTexture, previewSize);
+            GUILayout.EndVertical();
         }
 
         if (resizedTexture != null)
         {
+            GUILayout.BeginVertical();
             GUILayout.Label("Resized Texture");
             DrawTexturePreview(resizedTexture, previewSize);
+            GUILayout.EndVertical();
         }
 
         if (quantizedTexture != null)
         {
+            GUILayout.BeginVertical();
             GUILayout.Label("Quantized Texture");
             DrawTexturePreview(quantizedTexture, previewSize);
+            GUILayout.EndVertical();
         }
-
+        GUILayout.EndHorizontal();
         if (clut != null)
         {
             GUILayout.Label("Color Lookup Table (CLUT)");
@@ -65,29 +77,64 @@ public class QuantizedPreviewWindow : EditorWindow
     {
         resizedTexture = ResizeTexture(originalTexture, targetWidth, targetHeight);
 
-        int maxColors = (int)Mathf.Pow(2, bpp);
-
-        var (quantizedPixels, generatedClut) = ImageQuantizer.Quantize(resizedTexture, maxColors);
-
-        quantizedTexture = new Texture2D(resizedTexture.width, resizedTexture.height);
-        Color[] quantizedColors = new Color[resizedTexture.width * resizedTexture.height];
-
-        for (int y = 0; y < resizedTexture.height; y++)
+        if (bpp == 15) // Handle 15bpp (R5G5B5) without CLUT
         {
-            for (int x = 0; x < resizedTexture.width; x++)
+            quantizedTexture = ConvertTo15Bpp(resizedTexture);
+            clut = null; // No CLUT for 15bpp
+        }
+        else
+        {
+            int maxColors = (int)Mathf.Pow(2, bpp);
+
+            var (quantizedPixels, generatedClut) = ImageQuantizer.Quantize(resizedTexture, maxColors);
+
+            quantizedTexture = new Texture2D(resizedTexture.width, resizedTexture.height);
+            Color[] quantizedColors = new Color[resizedTexture.width * resizedTexture.height];
+
+            for (int y = 0; y < resizedTexture.height; y++)
             {
-                quantizedColors[y * resizedTexture.width + x] = new Color(
-                    quantizedPixels[x, y, 0],
-                    quantizedPixels[x, y, 1],
-                    quantizedPixels[x, y, 2]
-                );
+                for (int x = 0; x < resizedTexture.width; x++)
+                {
+                    quantizedColors[y * resizedTexture.width + x] = new Color(
+                        quantizedPixels[x, y, 0],
+                        quantizedPixels[x, y, 1],
+                        quantizedPixels[x, y, 2]
+                    );
+                }
             }
+
+            quantizedTexture.SetPixels(quantizedColors);
+            quantizedTexture.Apply();
+
+            clut = generatedClut;
+        }
+    }
+
+    private Texture2D ConvertTo15Bpp(Texture2D source)
+    {
+        int width = source.width;
+        int height = source.height;
+        Texture2D convertedTexture = new Texture2D(width, height);
+
+        Color[] originalPixels = source.GetPixels();
+        Color[] convertedPixels = new Color[originalPixels.Length];
+
+        for (int i = 0; i < originalPixels.Length; i++)
+        {
+            Color pixel = originalPixels[i];
+
+            // Convert to 5 bits per channel (R5G5B5)
+            float r = Mathf.Floor(pixel.r * 31) / 31.0f; // 5 bits for red
+            float g = Mathf.Floor(pixel.g * 31) / 31.0f; // 5 bits for green
+            float b = Mathf.Floor(pixel.b * 31) / 31.0f; // 5 bits for blue
+
+            convertedPixels[i] = new Color(r, g, b, pixel.a); // Maintain alpha channel
         }
 
-        quantizedTexture.SetPixels(quantizedColors);
-        quantizedTexture.Apply();
+        convertedTexture.SetPixels(convertedPixels);
+        convertedTexture.Apply();
 
-        clut = generatedClut;
+        return convertedTexture;
     }
 
     private void DrawTexturePreview(Texture2D texture, int size)

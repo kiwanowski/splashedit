@@ -25,6 +25,9 @@ namespace PSXSplash.RuntimeCode
         [Range(1, 256)]
         public int Height = 128;
 
+
+        // TODO: This just uses the quantization and doesn't store the result anywhere
+        // Maybe it should return the image and the clut back to the SceneExporter / The Editor code for only-texture export?
         public void Export(GameObject gameObject)
         {
             Debug.Log($"Export: {this}");
