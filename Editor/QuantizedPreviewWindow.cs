@@ -14,8 +14,9 @@ public class QuantizedPreviewWindow : EditorWindow
     private int bpp = 4;
     private int targetWidth = 128;
     private int targetHeight = 128;
+    public bool dithering = true;
     private int maxKMeans = 100;
-    private int previewSize = 256;
+    private readonly int previewSize = 256;
 
     [MenuItem("Window/Quantized Preview")]
     public static void ShowWindow()
@@ -32,6 +33,8 @@ public class QuantizedPreviewWindow : EditorWindow
 
         targetWidth = EditorGUILayout.IntField("Target Width", targetWidth);
         targetHeight = EditorGUILayout.IntField("Target Height", targetHeight);
+
+        dithering = EditorGUILayout.Toggle("Dithering", dithering);
 
         bpp = EditorGUILayout.IntPopup("Bits Per Pixel", bpp, new[] { "4 bpp", "8 bpp", "16 bpp" }, new[] { 4, 8, 16 });
         maxKMeans = EditorGUILayout.IntField("Max K-Means", maxKMeans);
@@ -131,6 +134,10 @@ public class QuantizedPreviewWindow : EditorWindow
     private void GenerateQuantizedPreview()
     {
         Texture2D resizedTexture = PSXTexture.ResizeTexture(originalTexture, targetWidth, targetHeight);
+
+        if(dithering) {
+            resizedTexture = PSXTexture.DitherTexture(resizedTexture);
+        }
 
         if (bpp == 16)
         {

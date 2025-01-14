@@ -44,6 +44,10 @@ namespace PSXSplash.RuntimeCode
                     Texture2D originalTexture = (Texture2D)texture;
 
                     Texture2D newTexture = ResizeTexture(originalTexture, Width, Height);
+                    if (Dithering)
+                    {
+                        newTexture = DitherTexture(newTexture);
+                    }
                     if (TextureType == PSXTextureType.TEX16_BPP)
                     {
                         ushort[] converted = ConvertTo16Bpp(newTexture);
@@ -138,6 +142,55 @@ namespace PSXSplash.RuntimeCode
             return packedData;
         }
 
+        public static Texture2D DitherTexture(Texture2D sourceTexture, float threshold = 0.2f, float errorDiffusionStrength = 0.1f)
+        {
+            int width = sourceTexture.width;
+            int height = sourceTexture.height;
+            Color[] pixels = sourceTexture.GetPixels();
+            Color[] ditheredPixels = new Color[pixels.Length];
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    int index = y * width + x;
+                    Color pixel = pixels[index];
+
+                    // Convert the pixel to grayscale
+                    float gray = pixel.grayscale;
+
+                    // Apply threshold to determine if it's black or white
+                    int dithered = (gray > threshold) ? 1 : 0;
+
+                    // Calculate the error as the difference between the grayscale value and the dithered result
+                    float error = gray - dithered;
+
+                    // Store the dithered pixel
+                    ditheredPixels[index] = new Color(dithered, dithered, dithered);
+
+                    // Spread the error to neighboring pixels with customizable error diffusion strength
+                    if (x + 1 < width) pixels[(y * width) + (x + 1)] += new Color(error * 7f / 16f * errorDiffusionStrength, error * 7f / 16f * errorDiffusionStrength, error * 7f / 16f * errorDiffusionStrength);
+                    if (y + 1 < height) pixels[((y + 1) * width) + x] += new Color(error * 3f / 16f * errorDiffusionStrength, error * 3f / 16f * errorDiffusionStrength, error * 3f / 16f * errorDiffusionStrength);
+                    if (x - 1 >= 0 && y + 1 < height) pixels[((y + 1) * width) + (x - 1)] += new Color(error * 5f / 16f * errorDiffusionStrength, error * 5f / 16f * errorDiffusionStrength, error * 5f / 16f * errorDiffusionStrength);
+                    if (x + 1 < width && y + 1 < height) pixels[((y + 1) * width) + (x + 1)] += new Color(error * 1f / 16f * errorDiffusionStrength, error * 1f / 16f * errorDiffusionStrength, error * 1f / 16f * errorDiffusionStrength);
+                }
+            }
+
+            // Clamp the final pixel values to ensure they are valid colors
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i].r = Mathf.Clamp01(pixels[i].r);
+                pixels[i].g = Mathf.Clamp01(pixels[i].g);
+                pixels[i].b = Mathf.Clamp01(pixels[i].b);
+            }
+
+            // Create the resulting dithered texture
+            Texture2D ditheredTexture = new Texture2D(width, height);
+            ditheredTexture.SetPixels(pixels);
+            ditheredTexture.Apply();
+
+            return ditheredTexture;
+        }
 
     }
 }
