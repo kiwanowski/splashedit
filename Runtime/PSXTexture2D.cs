@@ -60,9 +60,12 @@ namespace PSXSplash.RuntimeCode
         public int Height { get; set; }
         public int[] Pixels { get; set; }
         public List<VRAMPixel> ColorPalette = new List<VRAMPixel>();
-        public PSXBPP BitDepth;
-
+        public PSXBPP BitDepth { get; set; }
         private int _maxColors;
+
+        // Used only for 16bpp
+        public ushort[] ImageData { get; set; }
+
 
         public static PSXTexture2D CreateFromTexture2D(Texture2D inputTexture, PSXBPP bitDepth, bool dither)
         {
@@ -71,6 +74,19 @@ namespace PSXSplash.RuntimeCode
             psxTex.Width = inputTexture.width;
             psxTex.Height = inputTexture.height;
             psxTex.BitDepth = bitDepth;
+
+            if (bitDepth == PSXBPP.TEX_16BIT)
+            {
+                psxTex.ImageData = new ushort[inputTexture.width * inputTexture.height];
+                int i = 0;
+                foreach (Color pixel in inputTexture.GetPixels())
+                {
+                    VRAMPixel vramPixel = new VRAMPixel { R = (ushort)(pixel.r * 31), G = (ushort)(pixel.g * 31), B = (ushort)(pixel.b * 31) };
+                    psxTex.ImageData[i] = vramPixel.Pack();
+                    i++;
+                }
+                return psxTex;
+            }
 
             psxTex._maxColors = (int)Mathf.Pow((int)bitDepth, 2);
 
@@ -90,6 +106,27 @@ namespace PSXSplash.RuntimeCode
         public Texture2D GeneratePreview()
         {
             Texture2D tex = new Texture2D(Width, Height);
+            if (BitDepth == PSXBPP.TEX_16BIT)
+            {
+                Color[] colors16 = new Color[Width * Height];
+                // An instance for the Unpack method
+                VRAMPixel pixel = new VRAMPixel();
+
+                for (int i = 0; i < ImageData.Length; i++)
+                {
+                    ushort packedValue = ImageData[i];
+                    pixel.Unpack(packedValue);
+                    float r = pixel.R / 31f;
+                    float g = pixel.G / 31f;
+                    float b = pixel.B / 31f;
+                    
+                    colors16[i] = new Color(r,g,b);
+                }
+                tex.SetPixels(colors16);
+                tex.Apply();
+                return tex;
+            }
+
 
             List<Color> colors = new List<Color>();
             for (int y = 0; y < Height; y++)
@@ -113,6 +150,10 @@ namespace PSXSplash.RuntimeCode
 
         public Texture2D GenerateVramPreview()
         {
+            
+            if(BitDepth == PSXBPP.TEX_16BIT) {
+                return GeneratePreview();
+            }
 
             int adjustedWidth = Width;
 
@@ -152,7 +193,7 @@ namespace PSXSplash.RuntimeCode
             {
                 int index = packedValues[i];
 
-                float r = (index & 31) / 31.0f; 
+                float r = (index & 31) / 31.0f;
                 float g = ((index >> 5) & 31) / 31.0f;
                 float b = ((index >> 10) & 31) / 31.0f;
 
