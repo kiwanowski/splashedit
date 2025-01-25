@@ -11,6 +11,7 @@ namespace PSXSplash.EditorCode
     {
         public override void OnInspectorGUI()
         {
+            /*
             PSXObjectExporter comp = (PSXObjectExporter)target;
             serializedObject.Update();
 
@@ -79,7 +80,8 @@ namespace PSXSplash.EditorCode
             EditorGUILayout.EndVertical();
 
             serializedObject.ApplyModifiedProperties();
-
+        */
         }
+        
     }
 }

@@ -6,7 +6,7 @@ namespace PSXSplash.RuntimeCode
     {
 
         public PSXMesh Mesh;
-        public PSXTexture Texture;
+        //ublic PSXTexture Texture;
 
         public void Export()
         {
