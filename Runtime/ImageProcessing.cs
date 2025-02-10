@@ -1,28 +1,36 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
+using Codice.CM.Common;
+using DataStructures.ViliWonka.KDTree;
 using UnityEngine;
 
 
 
 namespace PSXSplash.RuntimeCode
 {
+
     public class ImageQuantizer
     {
         private int _maxColors;
-        private Color[] _pixels;
-        private Color[] _centroids;
-        private int[] _assignments;
-        private List<Color> _uniqueColors;
+        private Vector3[,] _pixels;
+        private Vector3[] _centroids;
+        private KDTree kdTree;
+        private int[,] _assignments;
+        private List<Vector3> _uniqueColors;
 
-        public Color[] Palette
+        public int Width { get; private set; }
+        public int Height { get; private set; }
+
+        public Vector3[] Palette
         {
             get => _centroids;
         }
 
-        public int[] Pixels
+        public int[,] Pixels
         {
             get => _assignments;
         }
@@ -32,38 +40,50 @@ namespace PSXSplash.RuntimeCode
         {
             Stopwatch stopwatch = new Stopwatch();
             stopwatch.Start();
-            _pixels = texture2D.GetPixels();
+            Color[] pixels = texture2D.GetPixels();
+
+            Width = texture2D.width;
+            Height = texture2D.height;
+
+            _pixels = new Vector3[Width, Height];
+
+            for (int x = 0; x < Width; x++)
+            {
+                for (int y = 0; y < Height; y++)
+                {
+                    Color pixel = pixels[x + y * Width];
+                    Vector3 pixelAsVector = new Vector3(pixel.r, pixel.g, pixel.b);
+                    _pixels[x, y] = pixelAsVector;
+                }
+            }
+
             _maxColors = maxColors;
-            _centroids = new Color[_maxColors];
-            _uniqueColors = new List<Color>();
+            _centroids = new Vector3[_maxColors];
+            _uniqueColors = new List<Vector3>();
 
 
             FillRandomCentroids();
 
             bool hasChanged;
-            _assignments = new int[_pixels.Count()];
+            _assignments = new int[Width, Height];
 
             do
             {
                 hasChanged = false;
-                Parallel.For(0, _pixels.Count(), i =>
+                for (int x = 0; x < Width; x++)
                 {
-                    int newAssignment = GetNearestCentroid(_pixels[i]);
-
-                    if (_assignments[i] != newAssignment)
+                    for (int y = 0; y < Height; y++)
                     {
-                        lock (_assignments)
+                        Vector3 color = _pixels[x, y];
+                        int newAssignment = GetNearestCentroid(color);
+                        
+                        if (_assignments[x, y] != newAssignment)
                         {
-                            _assignments[i] = newAssignment;
-                        }
-
-                        lock (this)
-                        {
+                            _assignments[x, y] = newAssignment;
                             hasChanged = true;
                         }
                     }
-                });
-
+                }
                 RecalculateCentroids();
             } while (hasChanged);
 
@@ -75,9 +95,11 @@ namespace PSXSplash.RuntimeCode
 
         private void FillRandomCentroids()
         {
-            foreach (Color pixel in _pixels)
+
+            List<Vector3> uniqueColors = new List<Vector3>();
+            foreach (Vector3 pixel in _pixels)
             {
-                if (!_uniqueColors.Contains(pixel))
+                if (!uniqueColors.Contains(pixel))
                 {
                     _uniqueColors.Add(pixel);
                 }
@@ -85,55 +107,44 @@ namespace PSXSplash.RuntimeCode
 
             for (int i = 0; i < _maxColors; i++)
             {
-                _centroids[i] = _uniqueColors[UnityEngine.Random.Range(0, _uniqueColors.Count - 1)];
+                Vector3 color = _uniqueColors[UnityEngine.Random.Range(0, _uniqueColors.Count - 1)];
+                _centroids[i] = color;
             }
+
+            kdTree = new KDTree(_centroids);
 
         }
 
-        private double CalculateColorDistance(Color color1, Color color2)
+        private int GetNearestCentroid(Vector3 color)
         {
-            float rDiff = color1.r - color2.r;
-            float gDiff = color1.g - color2.g;
-            float bDiff = color1.b - color2.b;
-
-            return Math.Sqrt(rDiff * rDiff + gDiff * gDiff + bDiff * bDiff);
-        }
-
-        private int GetNearestCentroid(Color color)
-        {
-            double minDistance = double.MaxValue;
-            int closestCentroidIndex = 0;
-
-            for (int i = 0; i < _maxColors; i++)
-            {
-                double distance = CalculateColorDistance(_centroids[i], color);
-                if (distance < minDistance)
-                {
-                    minDistance = distance;
-                    closestCentroidIndex = i;
-                }
-            }
-
-            return closestCentroidIndex;
+            KDQuery query = new KDQuery();
+            List<int> resultIndices = new List<int>();
+            query.ClosestPoint(kdTree, color, resultIndices);
+            return resultIndices[0];
         }
 
         private void RecalculateCentroids()
         {
-            Color[] newCentroids = new Color[_maxColors];
+            Vector3[] newCentroids = new Vector3[_maxColors];
 
 
-            Parallel.For(0, _maxColors, i =>
+            for(int i = 0; i < _maxColors; i++) 
             {
-                List<Color> clusterColors = new List<Color>();
-                for (int j = 0; j < _pixels.Length; j++)
+                List<Vector3> clusterColors = new List<Vector3>();
+                for (int x = 0; x < Width; x++)
                 {
-                    if (_assignments[j] == i)
+                    for (int y = 0; y < Height; y++)
                     {
-                        clusterColors.Add(_pixels[j]);
+                        {
+                            if (_assignments[x, y] == i)
+                            {
+                                clusterColors.Add(_pixels[x, y]);
+                            }
+                        }
                     }
                 }
 
-                Color newCentroid;
+                Vector3 newCentroid;
 
                 try
                 {
@@ -146,18 +157,20 @@ namespace PSXSplash.RuntimeCode
                 }
 
                 newCentroids[i] = newCentroid;
-            });
+            }
 
             _centroids = newCentroids;
+
+            kdTree = new KDTree(_centroids);
+
         }
 
-        private Color AverageColor(List<Color> colors)
+        private Vector3 AverageColor(List<Vector3> colors)
         {
-            float r = colors.Average(c => c.r);
-            float g = colors.Average(c => c.g);
-            float b = colors.Average(c => c.b);
-            float a = colors.Average(c => c.a);
-            return new Color(r, g, b, a);
+            float r = colors.Average(c => c.x);
+            float g = colors.Average(c => c.y);
+            float b = colors.Average(c => c.z);
+            return new Vector3(r, g, b);
         }
     }
 }

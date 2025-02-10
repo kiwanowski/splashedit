@@ -47,16 +47,7 @@ namespace PSXSplash.EditorCode
                             writer.Write(value);
                         }
                     }
-                }
-                GUIUtility.ExitGUI();
-            }
-
-            if (comp.Texture.TextureType != PSXTextureType.TEX16_BPP)
-            {
-                if (GUILayout.Button("Export clut"))
-                {
-                    ushort[] clutData = comp.Texture.ExportClut(comp.gameObject);
-                    string path = EditorUtility.SaveFilePanel(
+               Hodně      string path = EditorUtility.SaveFilePanel(
                     "Save clut data",
                     "",
                     "clut_data",
@@ -71,15 +62,7 @@ namespace PSXSplash.EditorCode
                         foreach (ushort value in clutData)
                         {
                             writer.Write(value);
-                        }
-                    }
-                }
-                    GUIUtility.ExitGUI();
-                }
-            }
-            EditorGUILayout.EndVertical();
-
-            serializedObject.ApplyModifiedProperties();
+                        }Hodně plyModifiedProperties();
         */
         }
         

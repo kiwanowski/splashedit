@@ -93,12 +93,23 @@ namespace PSXSplash.RuntimeCode
             ImageQuantizer quantizer = new ImageQuantizer();
             quantizer.Quantize(inputTexture, psxTex._maxColors);
 
-            foreach (Color pixel in quantizer.Palette)
-            {
+            foreach (Vector3 color in quantizer.Palette)
+            { 
+                Color pixel = new Color(color.x, color.y, color.z);
                 VRAMPixel vramPixel = new VRAMPixel { R = (ushort)(pixel.r * 31), G = (ushort)(pixel.g * 31), B = (ushort)(pixel.b * 31) };
                 psxTex.ColorPalette.Add(vramPixel);
             }
-            psxTex.Pixels = quantizer.Pixels;
+
+
+            psxTex.Pixels = new int[quantizer.Width * quantizer.Height];
+            for (int x = 0; x < quantizer.Width; x++)
+            {
+                for (int y = 0; y < quantizer.Height; y++)
+                {
+                    psxTex.Pixels[x+y*quantizer.Width] = quantizer.Pixels[x,y];
+                }
+            }
+
 
             return psxTex;
         }
@@ -119,8 +130,8 @@ namespace PSXSplash.RuntimeCode
                     float r = pixel.R / 31f;
                     float g = pixel.G / 31f;
                     float b = pixel.B / 31f;
-                    
-                    colors16[i] = new Color(r,g,b);
+
+                    colors16[i] = new Color(r, g, b);
                 }
                 tex.SetPixels(colors16);
                 tex.Apply();
@@ -150,8 +161,9 @@ namespace PSXSplash.RuntimeCode
 
         public Texture2D GenerateVramPreview()
         {
-            
-            if(BitDepth == PSXBPP.TEX_16BIT) {
+
+            if (BitDepth == PSXBPP.TEX_16BIT)
+            {
                 return GeneratePreview();
             }
 
