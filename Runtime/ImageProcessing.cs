@@ -5,14 +5,35 @@ using UnityEngine;
 
 namespace PSXSplash.RuntimeCode
 {
+
+    /// <summary>
+    /// The TextureQuantizer class provides methods to quantize a texture into a limited number of colors using K-Means clustering and Floyd-Steinberg dithering.
+    /// </summary>
     public class TextureQuantizer
     {
+
+        /// <summary>
+        /// Represents the result of the quantization process, containing the indices of the quantized colors and the palette of unique colors.
+        /// </summary>
         public struct QuantizedResult
         {
+            /// <summary>
+            /// The indices of the quantized colors in the texture.
+            /// </summary>
             public int[,] Indices;
+
+            /// <summary>
+            /// The palette of unique colors used in the quantized texture.
+            /// </summary>
             public List<Vector3> Palette;
         }
 
+        /// <summary>
+        /// Quantizes the given texture into a limited number of colors and dithers it.
+        /// </summary>
+        /// <param name="texture">The texture to be quantized.</param>
+        /// <param name="maxColors">The maximum number of colors allowed in the quantized texture.</param>
+        /// <returns>A QuantizedResult containing the indices of the quantized colors and the palette of unique colors.</returns>
         public static QuantizedResult Quantize(Texture2D texture, int maxColors)
         {
             int width = texture.width, height = texture.height;
