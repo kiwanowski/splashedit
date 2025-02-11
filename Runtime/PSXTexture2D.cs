@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using static PSXSplash.RuntimeCode.TextureQuantizer;
 
 
 namespace PSXSplash.RuntimeCode
@@ -67,7 +68,7 @@ namespace PSXSplash.RuntimeCode
         public ushort[] ImageData { get; set; }
 
 
-        public static PSXTexture2D CreateFromTexture2D(Texture2D inputTexture, PSXBPP bitDepth, bool dither)
+        public static PSXTexture2D CreateFromTexture2D(Texture2D inputTexture, PSXBPP bitDepth)
         {
             PSXTexture2D psxTex = new PSXTexture2D();
 
@@ -90,23 +91,22 @@ namespace PSXSplash.RuntimeCode
 
             psxTex._maxColors = (int)Mathf.Pow((int)bitDepth, 2);
 
-            ImageQuantizer quantizer = new ImageQuantizer();
-            quantizer.Quantize(inputTexture, psxTex._maxColors);
+            QuantizedResult result = Quantize(inputTexture, psxTex._maxColors);
 
-            foreach (Vector3 color in quantizer.Palette)
-            { 
+            foreach (Vector3 color in result.Palette)
+            {
                 Color pixel = new Color(color.x, color.y, color.z);
                 VRAMPixel vramPixel = new VRAMPixel { R = (ushort)(pixel.r * 31), G = (ushort)(pixel.g * 31), B = (ushort)(pixel.b * 31) };
                 psxTex.ColorPalette.Add(vramPixel);
             }
 
 
-            psxTex.Pixels = new int[quantizer.Width * quantizer.Height];
-            for (int x = 0; x < quantizer.Width; x++)
+            psxTex.Pixels = new int[psxTex.Width * psxTex.Height];
+            for (int x = 0; x < psxTex.Width; x++)
             {
-                for (int y = 0; y < quantizer.Height; y++)
+                for (int y = 0; y < psxTex.Height; y++)
                 {
-                    psxTex.Pixels[x+y*quantizer.Width] = quantizer.Pixels[x,y];
+                    psxTex.Pixels[x + y * psxTex.Width] = result.Indices[x, y];
                 }
             }
 
@@ -217,10 +217,5 @@ namespace PSXSplash.RuntimeCode
             return vramTexture;
 
         }
-
-
-
-
-
     }
 }

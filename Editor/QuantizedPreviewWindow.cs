@@ -127,7 +127,7 @@ public class QuantizedPreviewWindow : EditorWindow
     private void GenerateQuantizedPreview()
     {
 
-        PSXTexture2D psxTex = PSXTexture2D.CreateFromTexture2D(originalTexture, bpp, false);
+        PSXTexture2D psxTex = PSXTexture2D.CreateFromTexture2D(originalTexture, bpp);
 
         quantizedTexture = psxTex.GeneratePreview();
         vramTexture = psxTex.GenerateVramPreview();

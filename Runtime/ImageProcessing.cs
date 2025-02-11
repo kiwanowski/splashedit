@@ -1,176 +1,171 @@
-using System;
 using System.Collections.Generic;
-using System.Collections.Specialized;
-using System.Diagnostics;
 using System.Linq;
-using System.Threading.Tasks;
-using Codice.CM.Common;
-using DataStructures.ViliWonka.KDTree;
 using UnityEngine;
-
 
 
 namespace PSXSplash.RuntimeCode
 {
-
-    public class ImageQuantizer
+    public class TextureQuantizer
     {
-        private int _maxColors;
-        private Vector3[,] _pixels;
-        private Vector3[] _centroids;
-        private KDTree kdTree;
-        private int[,] _assignments;
-        private List<Vector3> _uniqueColors;
-
-        public int Width { get; private set; }
-        public int Height { get; private set; }
-
-        public Vector3[] Palette
+        public struct QuantizedResult
         {
-            get => _centroids;
+            public int[,] Indices;
+            public List<Vector3> Palette;
         }
 
-        public int[,] Pixels
+        public static QuantizedResult Quantize(Texture2D texture, int maxColors)
         {
-            get => _assignments;
-        }
+            int width = texture.width, height = texture.height;
+            Color[] pixels = texture.GetPixels();
+            int[,] indices = new int[width, height];
+
+            List<Vector3> uniqueColors = pixels.Select(c => new Vector3(c.r, c.g, c.b)).Distinct().ToList();
+            if (uniqueColors.Count <= maxColors) return ConvertToOutput(pixels, width, height);
+
+            List<Vector3> palette = KMeans(uniqueColors, maxColors);
+            KDTree kdTree = new KDTree(palette);
 
 
-        public void Quantize(Texture2D texture2D, int maxColors)
-        {
-            Stopwatch stopwatch = new Stopwatch();
-            stopwatch.Start();
-            Color[] pixels = texture2D.GetPixels();
-
-            Width = texture2D.width;
-            Height = texture2D.height;
-
-            _pixels = new Vector3[Width, Height];
-
-            for (int x = 0; x < Width; x++)
+            // Floyd-Steinberg Dithering
+            for (int y = 0; y < height; y++)
             {
-                for (int y = 0; y < Height; y++)
+                for (int x = 0; x < width; x++)
                 {
-                    Color pixel = pixels[x + y * Width];
-                    Vector3 pixelAsVector = new Vector3(pixel.r, pixel.g, pixel.b);
-                    _pixels[x, y] = pixelAsVector;
+                    Vector3 oldColor = new Vector3(pixels[y * width + x].r, pixels[y * width + x].g, pixels[y * width + x].b);
+                    int nearestIndex = kdTree.FindNearestIndex(oldColor);
+                    indices[x, y] = nearestIndex;
+
+                    Vector3 error = oldColor - palette[nearestIndex];
+                    PropagateError(pixels, width, height, x, y, error);
                 }
             }
 
-            _maxColors = maxColors;
-            _centroids = new Vector3[_maxColors];
-            _uniqueColors = new List<Vector3>();
 
+            return new QuantizedResult { Indices = indices, Palette = palette };
+        }
 
-            FillRandomCentroids();
+        private static List<Vector3> KMeans(List<Vector3> colors, int k)
+        {
+            List<Vector3> centroids = Enumerable.Range(0, k).Select(i => colors[i * colors.Count / k]).ToList();
 
-            bool hasChanged;
-            _assignments = new int[Width, Height];
-
-            do
+            List<List<Vector3>> clusters;
+            for (int i = 0; i < 10; i++) // Fixed iterations for performance.... i hate this...
             {
-                hasChanged = false;
-                for (int x = 0; x < Width; x++)
+                clusters = Enumerable.Range(0, k).Select(_ => new List<Vector3>()).ToList();
+                foreach (Vector3 color in colors)
                 {
-                    for (int y = 0; y < Height; y++)
+                    int closest = centroids.Select((c, index) => (index, Vector3.SqrMagnitude(c - color)))
+                                           .OrderBy(t => t.Item2).First().index;
+                    clusters[closest].Add(color);
+                }
+
+                for (int j = 0; j < k; j++)
+                {
+                    if (clusters[j].Count > 0)
+                        centroids[j] = clusters[j].Aggregate(Vector3.zero, (acc, c) => acc + c) / clusters[j].Count;
+                }
+            }
+            return centroids;
+        }
+
+        private static void PropagateError(Color[] pixels, int width, int height, int x, int y, Vector3 error)
+        {
+            void AddError(int dx, int dy, float factor)
+            {
+                int nx = x + dx, ny = y + dy;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height)
+                {
+                    int index = ny * width + nx;
+                    pixels[index].r += error.x * factor;
+                    pixels[index].g += error.y * factor;
+                    pixels[index].b += error.z * factor;
+                }
+            }
+            AddError(1, 0, 7f / 16f);
+            AddError(-1, 1, 3f / 16f);
+            AddError(0, 1, 5f / 16f);
+            AddError(1, 1, 1f / 16f);
+        }
+
+        private static QuantizedResult ConvertToOutput(Color[] pixels, int width, int height)
+        {
+            int[,] indices = new int[width, height];
+            List<Vector3> palette = new List<Vector3>();
+            Dictionary<Vector3, int> colorToIndex = new Dictionary<Vector3, int>();
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    Vector3 color = new Vector3(pixels[y * width + x].r, pixels[y * width + x].g, pixels[y * width + x].b);
+                    if (!colorToIndex.ContainsKey(color))
                     {
-                        Vector3 color = _pixels[x, y];
-                        int newAssignment = GetNearestCentroid(color);
-                        
-                        if (_assignments[x, y] != newAssignment)
-                        {
-                            _assignments[x, y] = newAssignment;
-                            hasChanged = true;
-                        }
+                        colorToIndex[color] = palette.Count;
+                        palette.Add(color);
                     }
-                }
-                RecalculateCentroids();
-            } while (hasChanged);
-
-            stopwatch.Stop();
-
-            UnityEngine.Debug.Log($"Quantization completed in {stopwatch.ElapsedMilliseconds} ms");
-
-        }
-
-        private void FillRandomCentroids()
-        {
-
-            List<Vector3> uniqueColors = new List<Vector3>();
-            foreach (Vector3 pixel in _pixels)
-            {
-                if (!uniqueColors.Contains(pixel))
-                {
-                    _uniqueColors.Add(pixel);
+                    indices[x, y] = colorToIndex[color];
                 }
             }
 
-            for (int i = 0; i < _maxColors; i++)
+            return new QuantizedResult { Indices = indices, Palette = palette };
+        }
+    }
+
+    public class KDTree
+    {
+        private class Node
+        {
+            public Vector3 Point;
+            public Node Left, Right;
+        }
+
+        private Node root;
+        private List<Vector3> points;
+
+        public KDTree(List<Vector3> points)
+        {
+            this.points = points;
+            root = Build(points, 0);
+        }
+
+        private Node Build(List<Vector3> points, int depth)
+        {
+            if (points.Count == 0) return null;
+
+            int axis = depth % 3;
+            points.Sort((a, b) => a[axis].CompareTo(b[axis]));
+            int median = points.Count / 2;
+
+            return new Node
             {
-                Vector3 color = _uniqueColors[UnityEngine.Random.Range(0, _uniqueColors.Count - 1)];
-                _centroids[i] = color;
-            }
-
-            kdTree = new KDTree(_centroids);
-
+                Point = points[median],
+                Left = Build(points.Take(median).ToList(), depth + 1),
+                Right = Build(points.Skip(median + 1).ToList(), depth + 1)
+            };
         }
 
-        private int GetNearestCentroid(Vector3 color)
+        public int FindNearestIndex(Vector3 target)
         {
-            KDQuery query = new KDQuery();
-            List<int> resultIndices = new List<int>();
-            query.ClosestPoint(kdTree, color, resultIndices);
-            return resultIndices[0];
+            Vector3 nearest = FindNearest(root, target, 0, root.Point);
+            return points.IndexOf(nearest);
         }
 
-        private void RecalculateCentroids()
+        private Vector3 FindNearest(Node node, Vector3 target, int depth, Vector3 best)
         {
-            Vector3[] newCentroids = new Vector3[_maxColors];
+            if (node == null) return best;
 
+            if (Vector3.SqrMagnitude(target - node.Point) < Vector3.SqrMagnitude(target - best))
+                best = node.Point;
 
-            for(int i = 0; i < _maxColors; i++) 
-            {
-                List<Vector3> clusterColors = new List<Vector3>();
-                for (int x = 0; x < Width; x++)
-                {
-                    for (int y = 0; y < Height; y++)
-                    {
-                        {
-                            if (_assignments[x, y] == i)
-                            {
-                                clusterColors.Add(_pixels[x, y]);
-                            }
-                        }
-                    }
-                }
+            int axis = depth % 3;
+            Node first = target[axis] < node.Point[axis] ? node.Left : node.Right;
+            Node second = first == node.Left ? node.Right : node.Left;
 
-                Vector3 newCentroid;
+            best = FindNearest(first, target, depth + 1, best);
+            if (Mathf.Pow(target[axis] - node.Point[axis], 2) < Vector3.SqrMagnitude(target - best))
+                best = FindNearest(second, target, depth + 1, best);
 
-                try
-                {
-                    newCentroid = AverageColor(clusterColors);
-                }
-                catch (InvalidOperationException)
-                {
-                    System.Random random = new System.Random();
-                    newCentroid = _uniqueColors[random.Next(0, _uniqueColors.Count - 1)];
-                }
-
-                newCentroids[i] = newCentroid;
-            }
-
-            _centroids = newCentroids;
-
-            kdTree = new KDTree(_centroids);
-
-        }
-
-        private Vector3 AverageColor(List<Vector3> colors)
-        {
-            float r = colors.Average(c => c.x);
-            float g = colors.Average(c => c.y);
-            float b = colors.Average(c => c.z);
-            return new Vector3(r, g, b);
+            return best;
         }
     }
 }
