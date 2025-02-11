@@ -6,6 +6,9 @@ using static PSXSplash.RuntimeCode.TextureQuantizer;
 namespace PSXSplash.RuntimeCode
 {
 
+    /// <summary>
+    /// Represents the bit depth of a PSX texture.
+    /// </summary>
     public enum PSXBPP
     {
         TEX_4BIT = 4,
@@ -13,38 +16,61 @@ namespace PSXSplash.RuntimeCode
         TEX_16BIT = 15
     }
 
+    /// <summary>
+    /// Represents a pixel in VRAM with RGB components and a semi-transparency flag.
+    /// </summary>
     public struct VRAMPixel
     {
         private ushort r; // 0-4 bits
         private ushort g; // 5-9 bits
         private ushort b; // 10-14 bits
 
+        /// <summary>
+        /// Red component (0-4 bits).
+        /// </summary>
         public ushort R
         {
             get => r;
             set => r = (ushort)(value & 0b11111);
         }
 
+        /// <summary>
+        /// Green component (0-4 bits).
+        /// </summary>
         public ushort G
         {
             get => g;
             set => g = (ushort)(value & 0b11111);
         }
 
+        /// <summary>
+        /// Blue component (0-4 bits).
+        /// </summary>
         public ushort B
         {
             get => b;
             set => b = (ushort)(value & 0b11111);
         }
 
+        /// <summary>
+        /// Gets or sets a value indicating whether the pixel is semi-transparent (15th bit).
+        /// </summary>
         public bool SemiTransparent { get; set; } // 15th bit
 
 
+        /// <summary>
+        /// Packs the RGB components and semi-transparency flag into a single ushort value.
+        /// </summary>
+        /// <returns>The packed ushort value.</returns>
         public ushort Pack()
         {
             return (ushort)((r << 11) | (g << 6) | (b << 1) | (SemiTransparent ? 1 : 0));
         }
 
+        /// <summary>
+        /// Unpacks the RGB components and semi-transparency flag from a packed ushort value.
+        /// </summary>
+        /// <param name="packedValue">The packed ushort value.</param>
         public void Unpack(ushort packedValue)
         {
             r = (ushort)((packedValue >> 11) & 0b11111);
@@ -54,12 +80,14 @@ namespace PSXSplash.RuntimeCode
         }
     }
 
-
+    /// <summary>
+    /// Represents a PSX texture with various bit depths and provides methods to create and manipulate the texture.
+    /// </summary>
     public class PSXTexture2D
     {
         public int Width { get; set; }
         public int Height { get; set; }
-        public int[] Pixels { get; set; }
+        public int[] PixelIndices { get; set; }
         public List<VRAMPixel> ColorPalette = new List<VRAMPixel>();
         public PSXBPP BitDepth { get; set; }
         private int _maxColors;
@@ -67,7 +95,12 @@ namespace PSXSplash.RuntimeCode
         // Used only for 16bpp
         public ushort[] ImageData { get; set; }
 
-
+        /// <summary>
+        /// Creates a PSX texture from a given Texture2D with the specified bit depth.
+        /// </summary>
+        /// <param name="inputTexture">The input Texture2D.</param>
+        /// <param name="bitDepth">The desired bit depth for the PSX texture.</param>
+        /// <returns>The created PSXTexture2D.</returns>
         public static PSXTexture2D CreateFromTexture2D(Texture2D inputTexture, PSXBPP bitDepth)
         {
             PSXTexture2D psxTex = new PSXTexture2D();
@@ -75,6 +108,7 @@ namespace PSXSplash.RuntimeCode
             psxTex.Width = inputTexture.width;
             psxTex.Height = inputTexture.height;
             psxTex.BitDepth = bitDepth;
+
 
             if (bitDepth == PSXBPP.TEX_16BIT)
             {
@@ -101,12 +135,12 @@ namespace PSXSplash.RuntimeCode
             }
 
 
-            psxTex.Pixels = new int[psxTex.Width * psxTex.Height];
+            psxTex.PixelIndices = new int[psxTex.Width * psxTex.Height];
             for (int x = 0; x < psxTex.Width; x++)
             {
                 for (int y = 0; y < psxTex.Height; y++)
                 {
-                    psxTex.Pixels[x + y * psxTex.Width] = result.Indices[x, y];
+                    psxTex.PixelIndices[x + y * psxTex.Width] = result.Indices[x, y];
                 }
             }
 
@@ -114,6 +148,11 @@ namespace PSXSplash.RuntimeCode
             return psxTex;
         }
 
+
+        /// <summary>
+        /// Generates a preview Texture2D from the PSX texture.
+        /// </summary>
+        /// <returns>The generated preview Texture2D.</returns>
         public Texture2D GeneratePreview()
         {
             Texture2D tex = new Texture2D(Width, Height);
@@ -144,7 +183,7 @@ namespace PSXSplash.RuntimeCode
             {
                 for (int x = 0; x < Width; x++)
                 {
-                    int pixel = Pixels[y * Width + x];
+                    int pixel = PixelIndices[y * Width + x];
                     VRAMPixel color = ColorPalette[pixel];
 
                     float r = color.R / 31f;
@@ -159,6 +198,10 @@ namespace PSXSplash.RuntimeCode
             return tex;
         }
 
+        /// <summary>
+        /// Generates a VRAM preview Texture2D from the PSX texture.
+        /// </summary>
+        /// <returns>The generated VRAM preview Texture2D.</returns>
         public Texture2D GenerateVramPreview()
         {
 
@@ -184,17 +227,17 @@ namespace PSXSplash.RuntimeCode
 
             if (BitDepth == PSXBPP.TEX_4BIT)
             {
-                for (int i = 0; i < Pixels.Length; i += 4)
+                for (int i = 0; i < PixelIndices.Length; i += 4)
                 {
-                    ushort packed = (ushort)((Pixels[i] << 12) | (Pixels[i + 1] << 8) | (Pixels[i + 2] << 4) | Pixels[i + 3]);
+                    ushort packed = (ushort)((PixelIndices[i] << 12) | (PixelIndices[i + 1] << 8) | (PixelIndices[i + 2] << 4) | PixelIndices[i + 3]);
                     packedValues.Add(packed);
                 }
             }
             else if (BitDepth == PSXBPP.TEX_8BIT)
             {
-                for (int i = 0; i < Pixels.Length; i += 2)
+                for (int i = 0; i < PixelIndices.Length; i += 2)
                 {
-                    ushort packed = (ushort)((Pixels[i] << 8) | Pixels[i + 1]);
+                    ushort packed = (ushort)((PixelIndices[i] << 8) | PixelIndices[i + 1]);
                     packedValues.Add(packed);
                 }
             }
