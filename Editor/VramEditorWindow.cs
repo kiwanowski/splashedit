@@ -44,6 +44,14 @@ public class VRAMEditorWindow : EditorWindow
         GetWindow<VRAMEditorWindow>("VRAM Editor");
     }
 
+    private void OnEnable()
+    {
+        vramImage = new Texture2D(VramWidth, VramHeight);
+        NativeArray<Color32> blackPixels = new NativeArray<Color32>(VramWidth * VramHeight, Allocator.Temp);
+        vramImage.SetPixelData(blackPixels, 0);
+        vramImage.Apply();
+        blackPixels.Dispose();
+    }
 
     public static void PasteTexture(Texture2D baseTexture, Texture2D overlayTexture, int posX, int posY)
     {
