@@ -142,6 +142,7 @@ namespace PSXSplash.RuntimeCode
                     psxTex.ImageData[i] = vramPixel.Pack();
                     i++;
                 }
+                psxTex.ColorPalette = null;
                 return psxTex;
             }
 

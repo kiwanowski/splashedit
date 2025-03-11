@@ -134,11 +134,14 @@ public class VRAMEditorWindow : EditorWindow
                 Debug.Log($"Packing {texture} at: x:{ta.PositionX + texture.PackingX} y:{ta.PositionY + texture.PackingY}");
                 PasteTexture(vramImage, texture.GenerateVramPreview(), ta.PositionX + texture.PackingX, ta.PositionY + texture.PackingY);
                 Debug.Log($"Texpage: {texture.TexpageNum} Offset:({texture.PackingX},{texture.PackingY})");
-
-                for(int i = 0; i < texture.ColorPalette.Count; i++) {
-                    vramImage.SetPixel(texture.ClutPackingX+i, texture.ClutPackingY, texture.ColorPalette[i].GetUnityColor());
+                if (texture.BitDepth != PSXBPP.TEX_16BIT)
+                {
+                    for (int i = 0; i < texture.ColorPalette.Count; i++)
+                    {
+                        vramImage.SetPixel(texture.ClutPackingX + i, texture.ClutPackingY, texture.ColorPalette[i].GetUnityColor());
+                    }
+                    vramImage.Apply();
                 }
-                vramImage.Apply();
             }
         }
     }
