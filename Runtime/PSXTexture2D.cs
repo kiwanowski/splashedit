@@ -78,6 +78,10 @@ namespace PSXSplash.RuntimeCode
             b = (ushort)((packedValue >> 1) & 0b11111);
             SemiTransparent = (packedValue & 0b1) != 0;
         }
+
+        public Color GetUnityColor() {
+            return new Color(R / 31.0f, G / 31.0f, B / 31.0f);
+        }
     }
 
     /// <summary>
@@ -86,10 +90,24 @@ namespace PSXSplash.RuntimeCode
     public class PSXTexture2D
     {
         public int Width { get; set; }
+        public int QuantizedWidth { get; set; }
         public int Height { get; set; }
         public int[] PixelIndices { get; set; }
         public List<VRAMPixel> ColorPalette = new List<VRAMPixel>();
         public PSXBPP BitDepth { get; set; }
+
+        public Texture2D OriginalTexture;
+
+        // Within supertexture
+        public int PackingX;
+        public int PackingY;
+
+        public int TexpageNum;
+
+        // Absolute positioning
+        public int ClutPackingX;
+        public int ClutPackingY;
+        
         private int _maxColors;
 
         // Used only for 16bpp
@@ -106,7 +124,11 @@ namespace PSXSplash.RuntimeCode
             PSXTexture2D psxTex = new PSXTexture2D();
 
             psxTex.Width = inputTexture.width;
+            psxTex.QuantizedWidth = bitDepth == PSXBPP.TEX_4BIT ? inputTexture.width / 4 :
+                        bitDepth == PSXBPP.TEX_8BIT ? inputTexture.width / 2 :
+                        inputTexture.width;
             psxTex.Height = inputTexture.height;
+            
             psxTex.BitDepth = bitDepth;
 
 

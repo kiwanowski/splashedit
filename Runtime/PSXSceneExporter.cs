@@ -22,7 +22,7 @@ namespace PSXSplash.RuntimeCode
 
       if (exporter != null)
       {
-        exporter.Export();
+        //exporter.Export();
       }
 
       foreach (Transform child in parentTransform)
