@@ -1,6 +1,5 @@
 using System.Collections.Generic;
-using System.Linq;
-using System.Reflection.Emit;
+using System.IO;
 using PSXSplash.RuntimeCode;
 using Unity.Collections;
 using UnityEditor;
@@ -61,7 +60,6 @@ public class VRAMEditorWindow : EditorWindow
             return;
         }
 
-        // Get pixels from the overlay texture
         Color[] overlayPixels = overlayTexture.GetPixels();
         Color[] basePixels = baseTexture.GetPixels();
 
@@ -70,31 +68,25 @@ public class VRAMEditorWindow : EditorWindow
         int overlayWidth = overlayTexture.width;
         int overlayHeight = overlayTexture.height;
 
-        // Loop through the overlay texture and paste it onto the base texture
         for (int y = 0; y < overlayHeight; y++)
         {
             for (int x = 0; x < overlayWidth; x++)
             {
                 int baseX = posX + x;
-                int baseY = posY + y;
-
-                // Ensure we are within bounds of the base texture
+                int baseY = posY + y; 
                 if (baseX >= 0 && baseX < baseWidth && baseY >= 0 && baseY < baseHeight)
                 {
                     int baseIndex = baseY * baseWidth + baseX;
                     int overlayIndex = y * overlayWidth + x;
 
-                    // Blend or replace pixel (simple overwrite in this case)
                     basePixels[baseIndex] = overlayPixels[overlayIndex];
                 }
             }
         }
 
-        // Apply the modified pixels back to the base texture
         baseTexture.SetPixels(basePixels);
         baseTexture.Apply();
     }
-
     private void PackTextures()
     {
 
@@ -122,28 +114,36 @@ public class VRAMEditorWindow : EditorWindow
 
 
         dontPackAreas.Add(buffer1);
-        dontPackAreas.Add(buffer2);
+        if (dualBuffering)
+        {
+            dontPackAreas.Add(buffer2);
+        }
 
         VRAMPacker tp = new VRAMPacker(dontPackAreas);
         var packed = tp.PackTexturesIntoVRAM(objects);
 
-        foreach (TextureAtlas ta in packed.atlases)
+        for (int y = 0; y < VramHeight; y++)
         {
-            foreach (PSXTexture2D texture in ta.ContainedTextures)
+            for (int x = 0; x < VramWidth; x++)
             {
-                Debug.Log($"Packing {texture} at: x:{ta.PositionX + texture.PackingX} y:{ta.PositionY + texture.PackingY}");
-                PasteTexture(vramImage, texture.GenerateVramPreview(), ta.PositionX + texture.PackingX, ta.PositionY + texture.PackingY);
-                Debug.Log($"Texpage: {texture.TexpageNum} Offset:({texture.PackingX},{texture.PackingY})");
-                if (texture.BitDepth != PSXBPP.TEX_16BIT)
+                vramImage.SetPixel(x, VramHeight - y - 1, packed._vramPixels[x, y].GetUnityColor());
+            }
+        }
+        vramImage.Apply();
+
+        string path = EditorUtility.SaveFilePanel("Select Output File", "", "output", "bin");
+
+        using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
+        {
+            for (int y = 0; y < VramHeight; y++)
+            {
+                for (int x = 0; x < VramWidth; x++)
                 {
-                    for (int i = 0; i < texture.ColorPalette.Count; i++)
-                    {
-                        vramImage.SetPixel(texture.ClutPackingX + i, texture.ClutPackingY, texture.ColorPalette[i].GetUnityColor());
-                    }
-                    vramImage.Apply();
+                    writer.Write(packed._vramPixels[x, y].Pack());
                 }
             }
         }
+
     }
 
     private void OnGUI()
@@ -220,12 +220,12 @@ public class VRAMEditorWindow : EditorWindow
                                       : new Rect(vramRect.x + selectedResolution.x, vramRect.y, selectedResolution.x, selectedResolution.y);
 
         EditorGUI.DrawRect(buffer1, bufferColor1);
-        GUI.Label(new Rect(buffer1.center.x - 40, buffer1.center.y - 10, 80, 20), "Framebuffer A", EditorStyles.boldLabel);
+        GUI.Label(new Rect(buffer1.center.x - 40, buffer1.center.y - 10, 120, 20), "Framebuffer A", EditorStyles.boldLabel);
         GUILayout.Space(10);
         if (dualBuffering)
         {
             EditorGUI.DrawRect(buffer2, bufferColor2);
-            GUI.Label(new Rect(buffer2.center.x - 40, buffer2.center.y - 10, 80, 20), "Framebuffer B", EditorStyles.boldLabel);
+            GUI.Label(new Rect(buffer2.center.x - 40, buffer2.center.y - 10, 120, 20), "Framebuffer B", EditorStyles.boldLabel);
         }
 
         foreach (ProhibitedArea area in prohibitedAreas)

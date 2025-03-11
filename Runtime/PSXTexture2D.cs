@@ -64,7 +64,7 @@ namespace PSXSplash.RuntimeCode
         /// <returns>The packed ushort value.</returns>
         public ushort Pack()
         {
-            return (ushort)((r << 11) | (g << 6) | (b << 1) | (SemiTransparent ? 1 : 0));
+            return (ushort)((SemiTransparent ? 1 << 15 : 0) | (b << 10) | (g << 5) | r);
         }
 
         /// <summary>
@@ -79,7 +79,8 @@ namespace PSXSplash.RuntimeCode
             SemiTransparent = (packedValue & 0b1) != 0;
         }
 
-        public Color GetUnityColor() {
+        public Color GetUnityColor()
+        {
             return new Color(R / 31.0f, G / 31.0f, B / 31.0f);
         }
     }
@@ -92,9 +93,10 @@ namespace PSXSplash.RuntimeCode
         public int Width { get; set; }
         public int QuantizedWidth { get; set; }
         public int Height { get; set; }
-        public int[] PixelIndices { get; set; }
+        public int[,] PixelIndices { get; set; }
         public List<VRAMPixel> ColorPalette = new List<VRAMPixel>();
         public PSXBPP BitDepth { get; set; }
+
 
         public Texture2D OriginalTexture;
 
@@ -107,11 +109,10 @@ namespace PSXSplash.RuntimeCode
         // Absolute positioning
         public int ClutPackingX;
         public int ClutPackingY;
-        
+
         private int _maxColors;
 
-        // Used only for 16bpp
-        public ushort[] ImageData { get; set; }
+        public VRAMPixel[,] ImageData { get; set; }
 
         /// <summary>
         /// Creates a PSX texture from a given Texture2D with the specified bit depth.
@@ -128,19 +129,30 @@ namespace PSXSplash.RuntimeCode
                         bitDepth == PSXBPP.TEX_8BIT ? inputTexture.width / 2 :
                         inputTexture.width;
             psxTex.Height = inputTexture.height;
-            
+
             psxTex.BitDepth = bitDepth;
 
 
             if (bitDepth == PSXBPP.TEX_16BIT)
             {
-                psxTex.ImageData = new ushort[inputTexture.width * inputTexture.height];
-                int i = 0;
-                foreach (Color pixel in inputTexture.GetPixels())
+                psxTex.ImageData = new VRAMPixel[inputTexture.width, inputTexture.height];
+
+                int width = inputTexture.width;
+                int height = inputTexture.height;
+
+                for (int y = 0; y < height; y++) // Start from top row, move downward
                 {
-                    VRAMPixel vramPixel = new VRAMPixel { R = (ushort)(pixel.r * 31), G = (ushort)(pixel.g * 31), B = (ushort)(pixel.b * 31) };
-                    psxTex.ImageData[i] = vramPixel.Pack();
-                    i++;
+                    for (int x = 0; x < width; x++) // Start from right column, move leftward
+                    {
+                        Color pixel = inputTexture.GetPixel(x, height-y-1);
+                        VRAMPixel vramPixel = new VRAMPixel
+                        {
+                            R = (ushort)(pixel.r * 31),
+                            G = (ushort)(pixel.g * 31),
+                            B = (ushort)(pixel.b * 31)
+                        };
+                        psxTex.ImageData[x, y] = vramPixel;
+                    }
                 }
                 psxTex.ColorPalette = null;
                 return psxTex;
@@ -158,12 +170,43 @@ namespace PSXSplash.RuntimeCode
             }
 
 
-            psxTex.PixelIndices = new int[psxTex.Width * psxTex.Height];
-            for (int x = 0; x < psxTex.Width; x++)
+            psxTex.ImageData = new VRAMPixel[psxTex.QuantizedWidth, psxTex.Height];
+
+            psxTex.PixelIndices = result.Indices;
+
+            int groupSize = (bitDepth == PSXBPP.TEX_8BIT) ? 2 : 4; 
+
+            for (int y = 0; y < psxTex.Height; y++)
             {
-                for (int y = 0; y < psxTex.Height; y++)
+                if (bitDepth == PSXBPP.TEX_8BIT)
                 {
-                    psxTex.PixelIndices[x + y * psxTex.Width] = result.Indices[x, y];
+                    for (int group = 0; group < psxTex.QuantizedWidth; group++)
+                    {
+                        int baseIndex = group * 2;
+                        // Combine two 8-bit indices into one ushort.
+                        int index1 = psxTex.PixelIndices[baseIndex, y] & 0xFF;      
+                        int index2 = psxTex.PixelIndices[baseIndex + 1, y] & 0xFF; 
+                        ushort packed = (ushort)((index1 << 8) | index2);
+                        VRAMPixel pixel = new VRAMPixel();
+                        pixel.Unpack(packed);
+                        psxTex.ImageData[group, psxTex.Height-y-1] = pixel;
+                    }
+                }
+                else if (bitDepth == PSXBPP.TEX_4BIT)
+                {
+                    for (int group = 0; group < psxTex.QuantizedWidth; group++)
+                    {
+                        int baseIndex = group * 4;
+                        // Combine four 4-bit indices into one ushort.
+                        int idx1 = psxTex.PixelIndices[baseIndex, y] & 0xF;
+                        int idx2 = psxTex.PixelIndices[baseIndex + 1, y] & 0xF;
+                        int idx3 = psxTex.PixelIndices[baseIndex + 2, y] & 0xF;
+                        int idx4 = psxTex.PixelIndices[baseIndex + 3, y] & 0xF;
+                        ushort packed = (ushort)((idx1 << 12) | (idx2 << 8) | (idx3 << 4) | idx4);
+                        VRAMPixel pixel = new VRAMPixel();
+                        pixel.Unpack(packed);
+                        psxTex.ImageData[group, psxTex.Height-y-1] = pixel;
+                    }
                 }
             }
 
@@ -181,42 +224,26 @@ namespace PSXSplash.RuntimeCode
             Texture2D tex = new Texture2D(Width, Height);
             if (BitDepth == PSXBPP.TEX_16BIT)
             {
-                Color[] colors16 = new Color[Width * Height];
-                // An instance for the Unpack method
-                VRAMPixel pixel = new VRAMPixel();
 
-                for (int i = 0; i < ImageData.Length; i++)
+                for (int y = 0; y < Width; y++)
                 {
-                    ushort packedValue = ImageData[i];
-                    pixel.Unpack(packedValue);
-                    float r = pixel.R / 31f;
-                    float g = pixel.G / 31f;
-                    float b = pixel.B / 31f;
-
-                    colors16[i] = new Color(r, g, b);
+                    for (int x = 0; x < Height; x++)
+                    {
+                        tex.SetPixel(x, y, ImageData[x, y].GetUnityColor());
+                    }
                 }
-                tex.SetPixels(colors16);
+
                 tex.Apply();
                 return tex;
             }
 
-
-            List<Color> colors = new List<Color>();
             for (int y = 0; y < Height; y++)
             {
                 for (int x = 0; x < Width; x++)
                 {
-                    int pixel = PixelIndices[y * Width + x];
-                    VRAMPixel color = ColorPalette[pixel];
-
-                    float r = color.R / 31f;
-                    float g = color.G / 31f;
-                    float b = color.B / 31f;
-
-                    colors.Add(new Color(r, g, b));
+                    tex.SetPixel(x, y, ColorPalette[PixelIndices[x, y]].GetUnityColor());
                 }
             }
-            tex.SetPixels(colors.ToArray());
             tex.Apply();
             return tex;
         }
@@ -233,51 +260,16 @@ namespace PSXSplash.RuntimeCode
                 return GeneratePreview();
             }
 
-            int adjustedWidth = Width;
-
-            if (BitDepth == PSXBPP.TEX_4BIT)
-            {
-                adjustedWidth = Mathf.CeilToInt(Width / 4f);
-            }
-            else if (BitDepth == PSXBPP.TEX_8BIT)
-            {
-                adjustedWidth = Mathf.CeilToInt(Width / 2f);
-            }
-
-            Texture2D vramTexture = new Texture2D(adjustedWidth, Height);
-
-            List<ushort> packedValues = new List<ushort>();
-
-            if (BitDepth == PSXBPP.TEX_4BIT)
-            {
-                for (int i = 0; i < PixelIndices.Length; i += 4)
-                {
-                    ushort packed = (ushort)((PixelIndices[i] << 12) | (PixelIndices[i + 1] << 8) | (PixelIndices[i + 2] << 4) | PixelIndices[i + 3]);
-                    packedValues.Add(packed);
-                }
-            }
-            else if (BitDepth == PSXBPP.TEX_8BIT)
-            {
-                for (int i = 0; i < PixelIndices.Length; i += 2)
-                {
-                    ushort packed = (ushort)((PixelIndices[i] << 8) | PixelIndices[i + 1]);
-                    packedValues.Add(packed);
-                }
-            }
-
+            Texture2D vramTexture = new Texture2D(QuantizedWidth, Height);
 
             List<Color> colors = new List<Color>();
-            for (int i = 0; i < packedValues.Count; i++)
+            for (int y = 0; y < Height; y++)
             {
-                int index = packedValues[i];
-
-                float r = (index & 31) / 31.0f;
-                float g = ((index >> 5) & 31) / 31.0f;
-                float b = ((index >> 10) & 31) / 31.0f;
-
-                colors.Add(new Color(r, g, b));
+                for (int x = 0; x < QuantizedWidth; x++)
+                {
+                    vramTexture.SetPixel(x, y, ImageData[x, y].GetUnityColor());
+                }
             }
-            vramTexture.SetPixels(colors.ToArray());
             vramTexture.Apply();
 
             return vramTexture;
