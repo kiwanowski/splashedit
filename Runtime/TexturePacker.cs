@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
-using PSXSplash.RuntimeCode;
 
 
 
@@ -154,7 +153,7 @@ namespace PSXSplash.RuntimeCode
                 int clutHeight = 1;
                 bool placed = false;
 
-                for (int x = 0; x < VRAM_WIDTH; x++)
+                for (int x = 0; x < VRAM_WIDTH; x+=16)
                 {
                     for (int y = 0; y <= VRAM_HEIGHT; y++)
                     {

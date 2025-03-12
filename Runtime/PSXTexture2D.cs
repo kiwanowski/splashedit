@@ -73,11 +73,12 @@ namespace PSXSplash.RuntimeCode
         /// <param name="packedValue">The packed ushort value.</param>
         public void Unpack(ushort packedValue)
         {
-            r = (ushort)((packedValue >> 11) & 0b11111);
-            g = (ushort)((packedValue >> 6) & 0b11111);
-            b = (ushort)((packedValue >> 1) & 0b11111);
-            SemiTransparent = (packedValue & 0b1) != 0;
+            SemiTransparent = (packedValue & (1 << 15)) != 0;
+            b = (ushort)((packedValue >> 10) & 0b11111);
+            g = (ushort)((packedValue >> 5) & 0b11111);
+            r = (ushort)(packedValue & 0b11111);
         }
+
 
         public Color GetUnityColor()
         {
@@ -144,7 +145,7 @@ namespace PSXSplash.RuntimeCode
                 {
                     for (int x = 0; x < width; x++) // Start from right column, move leftward
                     {
-                        Color pixel = inputTexture.GetPixel(x, height-y-1);
+                        Color pixel = inputTexture.GetPixel(x, height - y - 1);
                         VRAMPixel vramPixel = new VRAMPixel
                         {
                             R = (ushort)(pixel.r * 31),
@@ -174,7 +175,7 @@ namespace PSXSplash.RuntimeCode
 
             psxTex.PixelIndices = result.Indices;
 
-            int groupSize = (bitDepth == PSXBPP.TEX_8BIT) ? 2 : 4; 
+            int groupSize = (bitDepth == PSXBPP.TEX_8BIT) ? 2 : 4;
 
             for (int y = 0; y < psxTex.Height; y++)
             {
@@ -184,12 +185,12 @@ namespace PSXSplash.RuntimeCode
                     {
                         int baseIndex = group * 2;
                         // Combine two 8-bit indices into one ushort.
-                        int index1 = psxTex.PixelIndices[baseIndex, y] & 0xFF;      
-                        int index2 = psxTex.PixelIndices[baseIndex + 1, y] & 0xFF; 
-                        ushort packed = (ushort)((index1 << 8) | index2);
+                        int index1 = psxTex.PixelIndices[baseIndex, y] & 0xFF;
+                        int index2 = psxTex.PixelIndices[baseIndex + 1, y] & 0xFF;
+                        ushort packed = (ushort)((index2 << 8) | index1);
                         VRAMPixel pixel = new VRAMPixel();
                         pixel.Unpack(packed);
-                        psxTex.ImageData[group, psxTex.Height-y-1] = pixel;
+                        psxTex.ImageData[group, psxTex.Height - y - 1] = pixel;
                     }
                 }
                 else if (bitDepth == PSXBPP.TEX_4BIT)
@@ -202,10 +203,10 @@ namespace PSXSplash.RuntimeCode
                         int idx2 = psxTex.PixelIndices[baseIndex + 1, y] & 0xF;
                         int idx3 = psxTex.PixelIndices[baseIndex + 2, y] & 0xF;
                         int idx4 = psxTex.PixelIndices[baseIndex + 3, y] & 0xF;
-                        ushort packed = (ushort)((idx1 << 12) | (idx2 << 8) | (idx3 << 4) | idx4);
+                        ushort packed = (ushort)((idx4 << 12) | (idx3 << 8) | (idx2 << 4) | idx1);
                         VRAMPixel pixel = new VRAMPixel();
                         pixel.Unpack(packed);
-                        psxTex.ImageData[group, psxTex.Height-y-1] = pixel;
+                        psxTex.ImageData[group, psxTex.Height - y - 1] = pixel;
                     }
                 }
             }
