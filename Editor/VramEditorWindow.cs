@@ -8,13 +8,6 @@ using UnityEngine.Rendering;
 
 public class VRAMEditorWindow : EditorWindow
 {
-    class ProhibitedArea
-    {
-        public int X;
-        public int Y;
-        public int Width;
-        public int Height;
-    }
 
     private const int VramWidth = 1024;
     private const int VramHeight = 512;
@@ -27,6 +20,9 @@ public class VRAMEditorWindow : EditorWindow
     private Color bufferColor1 = new Color(1, 0, 0, 0.5f);
     private Color bufferColor2 = new Color(0, 1, 0, 0.5f);
     private Color prohibitedColor = new Color(1, 0, 0, 0.3f);
+
+    private static string _psxDataPath = "Assets/PSXData.asset";
+    private PSXData _psxData;
 
     private static readonly Vector2[] resolutions =
     {
@@ -50,6 +46,8 @@ public class VRAMEditorWindow : EditorWindow
         vramImage.SetPixelData(blackPixels, 0);
         vramImage.Apply();
         blackPixels.Dispose();
+
+        LoadData();
     }
 
     public static void PasteTexture(Texture2D baseTexture, Texture2D overlayTexture, int posX, int posY)
@@ -73,7 +71,7 @@ public class VRAMEditorWindow : EditorWindow
             for (int x = 0; x < overlayWidth; x++)
             {
                 int baseX = posX + x;
-                int baseY = posY + y; 
+                int baseY = posY + y;
                 if (baseX >= 0 && baseX < baseWidth && baseY >= 0 && baseY < baseHeight)
                 {
                     int baseIndex = baseY * baseWidth + baseX;
@@ -102,25 +100,20 @@ public class VRAMEditorWindow : EditorWindow
             exp.CreatePSXTexture2D();
         }
 
-        List<Rect> dontPackAreas = new List<Rect>();
-        foreach (ProhibitedArea area in prohibitedAreas)
-        {
-            dontPackAreas.Add(new Rect(area.X, area.Y, area.Width, area.Height));
-        }
-
         Rect buffer1 = new Rect(0, 0, selectedResolution.x, selectedResolution.y);
         Rect buffer2 = verticalLayout ? new Rect(0, 256, selectedResolution.x, selectedResolution.y)
                                       : new Rect(selectedResolution.x, 0, selectedResolution.x, selectedResolution.y);
 
 
-        dontPackAreas.Add(buffer1);
+        List<Rect> framebuffers = new List<Rect> { buffer1 };
         if (dualBuffering)
         {
-            dontPackAreas.Add(buffer2);
+            framebuffers.Add(buffer2);
         }
 
-        VRAMPacker tp = new VRAMPacker(dontPackAreas);
+        VRAMPacker tp = new VRAMPacker(framebuffers, prohibitedAreas);
         var packed = tp.PackTexturesIntoVRAM(objects);
+
 
         for (int y = 0; y < VramHeight; y++)
         {
@@ -190,10 +183,10 @@ public class VRAMEditorWindow : EditorWindow
             if (GUILayout.Button("Remove"))
             {
                 prohibitedAreas.RemoveAt(i);
-                break; // Avoid out-of-bounds errors after removal
+                break;
             }
 
-            prohibitedAreas[i] = area; // Update the list with edited values
+            prohibitedAreas[i] = area;
             GUILayout.Space(10);
         }
 
@@ -204,7 +197,6 @@ public class VRAMEditorWindow : EditorWindow
             prohibitedAreas.Add(new ProhibitedArea());
         }
 
-        // New "Pack Textures" Button
         if (GUILayout.Button("Pack Textures"))
         {
             PackTextures();
@@ -235,5 +227,38 @@ public class VRAMEditorWindow : EditorWindow
         }
 
         GUILayout.EndHorizontal();
+        StoreData();
+    }
+
+    private void LoadData()
+    {
+        _psxData = AssetDatabase.LoadAssetAtPath<PSXData>(_psxDataPath);
+
+        if (!_psxData)
+        {
+            _psxData = CreateInstance<PSXData>();
+            AssetDatabase.CreateAsset(_psxData, _psxDataPath);
+            AssetDatabase.SaveAssets();
+        }
+
+        selectedResolution = _psxData.OutputResolution;
+        dualBuffering = _psxData.DualBuffering;
+        verticalLayout = _psxData.VerticalBuffering;
+        prohibitedAreas = _psxData.ProhibitedAreas;
+    }
+
+    private void StoreData()
+    {
+        if (_psxData != null)
+        {
+            _psxData.OutputResolution = selectedResolution;
+            _psxData.DualBuffering = dualBuffering;
+            _psxData.VerticalBuffering = verticalLayout;
+            _psxData.ProhibitedAreas = prohibitedAreas;
+
+            EditorUtility.SetDirty(_psxData);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+        }
     }
 }

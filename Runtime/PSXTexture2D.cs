@@ -102,14 +102,15 @@ namespace PSXSplash.RuntimeCode
         public Texture2D OriginalTexture;
 
         // Within supertexture
-        public int PackingX;
-        public int PackingY;
+        public byte PackingX;
+        public byte PackingY;
 
-        public int TexpageNum;
+        public byte TexpageX;
+        public byte TexpageY;
 
         // Absolute positioning
-        public int ClutPackingX;
-        public int ClutPackingY;
+        public ushort ClutPackingX;
+        public ushort ClutPackingY;
 
         private int _maxColors;
 
@@ -263,7 +264,6 @@ namespace PSXSplash.RuntimeCode
 
             Texture2D vramTexture = new Texture2D(QuantizedWidth, Height);
 
-            List<Color> colors = new List<Color>();
             for (int y = 0; y < Height; y++)
             {
                 for (int x = 0; x < QuantizedWidth; x++)

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using NUnit.Framework;
 using UnityEngine;
 
 
@@ -29,9 +30,16 @@ namespace PSXSplash.RuntimeCode
 
         private VRAMPixel[,] _vramPixels;
 
-        public VRAMPacker(List<Rect> reservedAreas)
+        public VRAMPacker(List<Rect> framebuffers, List<ProhibitedArea> reservedAreas)
         {
-            _reservedAreas = reservedAreas;
+            List<Rect> areasConvertedToRect = new List<Rect>();
+            foreach (ProhibitedArea area in reservedAreas)
+            {
+                areasConvertedToRect.Add(new Rect(area.X, area.Y, area.Width, area.Height));
+            }
+            _reservedAreas = areasConvertedToRect;
+            _reservedAreas.Add(framebuffers[0]);
+            _reservedAreas.Add(framebuffers[1]);
             _vramPixels = new VRAMPixel[VRAM_WIDTH, VRAM_HEIGHT];
         }
 
@@ -77,15 +85,16 @@ namespace PSXSplash.RuntimeCode
 
             ArrangeAtlasesInVRAM();
             AllocateCLUTs();
+
             BuildVram();
             return (objects, _vramPixels);
         }
 
         private bool TryPlaceTextureInAtlas(TextureAtlas atlas, PSXTexture2D texture)
         {
-            for (int y = 0; y <= TextureAtlas.Height - texture.Height; y++)
+            for (byte y = 0; y <= TextureAtlas.Height - texture.Height; y++)
             {
-                for (int x = 0; x <= atlas.Width - texture.QuantizedWidth; x++)
+                for (byte x = 0; x <= atlas.Width - texture.QuantizedWidth; x++)
                 {
                     var candidateRect = new Rect(x, y, texture.QuantizedWidth, texture.Height);
                     if (!atlas.ContainedTextures.Any(tex => new Rect(tex.PackingX, tex.PackingY, tex.QuantizedWidth, tex.Height).Overlaps(candidateRect)))
@@ -129,7 +138,11 @@ namespace PSXSplash.RuntimeCode
                         {
                             foreach (PSXTexture2D texture in atlas.ContainedTextures)
                             {
-                                texture.TexpageNum = CalculateTexpage(atlas.PositionX, atlas.PositionY);
+                                int colIndex = atlas.PositionX / 64;
+                                int rowIndex = atlas.PositionY / 256;
+
+                                texture.TexpageX = (byte)colIndex;
+                                texture.TexpageY = (byte)rowIndex;
                             }
                             break;
                         }
@@ -153,9 +166,9 @@ namespace PSXSplash.RuntimeCode
                 int clutHeight = 1;
                 bool placed = false;
 
-                for (int x = 0; x < VRAM_WIDTH; x+=16)
+                for (ushort x = 0; x < VRAM_WIDTH; x += 16)
                 {
-                    for (int y = 0; y <= VRAM_HEIGHT; y++)
+                    for (ushort y = 0; y <= VRAM_HEIGHT; y++)
                     {
                         var candidate = new Rect(x, y, clutWidth, clutHeight);
                         if (IsPlacementValid(candidate))

@@ -3,7 +3,6 @@ using UnityEngine;
 
 namespace PSXSplash.RuntimeCode
 {
-
     public struct PSXVertex
     {
         public short vx, vy, vz;
@@ -22,7 +21,7 @@ namespace PSXSplash.RuntimeCode
     {
         public List<Tri> Triangles;
 
-        public static PSXMesh CreateFromUnityMesh(Mesh mesh, int textureWidth, int textureHeight)
+        public static PSXMesh CreateFromUnityMesh(Mesh mesh, int textureWidth = 256, int textureHeight = 256, Transform transform = null)
         {
             PSXMesh psxMesh = new PSXMesh { Triangles = new List<Tri>() };
 
@@ -36,11 +35,16 @@ namespace PSXSplash.RuntimeCode
                 int vid1 = indices[i + 1];
                 int vid2 = indices[i + 2];
 
-                PSXVertex v0 = ConvertToPSXVertex(vertices[vid0], uv[vid0], textureWidth, textureHeight);
-                PSXVertex v1 = ConvertToPSXVertex(vertices[vid1], uv[vid1], textureWidth, textureHeight);
-                PSXVertex v2 = ConvertToPSXVertex(vertices[vid2], uv[vid2], textureWidth, textureHeight);
+                // Convert to world space only if a transform is provided
+                Vector3 v0 = transform ? transform.TransformPoint(vertices[vid0]) : vertices[vid0];
+                Vector3 v1 = transform ? transform.TransformPoint(vertices[vid1]) : vertices[vid1];
+                Vector3 v2 = transform ? transform.TransformPoint(vertices[vid2]) : vertices[vid2];
 
-                psxMesh.Triangles.Add(new Tri { v0 = v0, v1 = v1, v2 = v2 });
+                PSXVertex psxV0 = ConvertToPSXVertex(v0, uv[vid0], textureWidth, textureHeight);
+                PSXVertex psxV1 = ConvertToPSXVertex(v1, uv[vid1], textureWidth, textureHeight);
+                PSXVertex psxV2 = ConvertToPSXVertex(v2, uv[vid2], textureWidth, textureHeight);
+
+                psxMesh.Triangles.Add(new Tri { v0 = psxV0, v1 = psxV1, v2 = psxV2 });
             }
 
             return psxMesh;
@@ -51,10 +55,10 @@ namespace PSXSplash.RuntimeCode
             PSXVertex psxVertex = new PSXVertex
             {
                 vx = (short)(Mathf.Clamp(vertex.x, -4f, 3.999f) * 4096),
-                vy = (short)(Mathf.Clamp(vertex.y, -4f, 3.999f) * 4096),
+                vy = (short)(Mathf.Clamp(-vertex.y, -4f, 3.999f) * 4096),
                 vz = (short)(Mathf.Clamp(vertex.z, -4f, 3.999f) * 4096),
-                u = (byte)(Mathf.Clamp(uv.x * textureWidth, 0, 255)),
-                v = (byte)(Mathf.Clamp((1.0f - uv.y) * textureHeight, 0, 255))
+                u = (byte)(Mathf.Clamp((uv.x * (textureWidth-1)), 0, 255)),
+                v = (byte)(Mathf.Clamp(((1.0f - uv.y) * (textureHeight-1)), 0, 255)) 
             };
             return psxVertex;
         }

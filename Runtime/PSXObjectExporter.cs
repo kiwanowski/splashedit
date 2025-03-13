@@ -5,6 +5,7 @@ namespace PSXSplash.RuntimeCode
     public class PSXObjectExporter : MonoBehaviour
     {
         public PSXBPP BitDepth;
+        public bool MeshIsStatic = true;
 
         [HideInInspector]
         public PSXTexture2D Texture;
@@ -27,7 +28,12 @@ namespace PSXSplash.RuntimeCode
             MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
             if (meshFilter != null)
             {
-                Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.mesh, Texture.Width, Texture.Height);
+                if(MeshIsStatic) {
+                    Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.sharedMesh, Texture.Width, Texture.Height, transform);
+                }
+                else {
+                    Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.sharedMesh, Texture.Width, Texture.Height);
+                }
             }
         }
     }
