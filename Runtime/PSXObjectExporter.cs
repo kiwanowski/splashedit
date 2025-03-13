@@ -9,6 +9,9 @@ namespace PSXSplash.RuntimeCode
         [HideInInspector]
         public PSXTexture2D Texture;
 
+        [HideInInspector]
+        public PSXMesh Mesh;
+
         public void CreatePSXTexture2D()
         {
             Renderer renderer = GetComponent<Renderer>();
@@ -16,6 +19,15 @@ namespace PSXSplash.RuntimeCode
             {
                 Texture = PSXTexture2D.CreateFromTexture2D(texture, BitDepth);
                 Texture.OriginalTexture = texture;
+            }
+        }
+
+        public void CreatePSXMesh()
+        {
+            MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
+            if (meshFilter != null)
+            {
+                Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.mesh, Texture.Width, Texture.Height);
             }
         }
     }
