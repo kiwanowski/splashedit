@@ -1,9 +1,8 @@
 using System.Collections.Generic;
 using UnityEngine;
-using static PSXSplash.RuntimeCode.TextureQuantizer;
 
 
-namespace PSXSplash.RuntimeCode
+namespace SplashEdit.RuntimeCode
 {
 
     /// <summary>
@@ -162,7 +161,7 @@ namespace PSXSplash.RuntimeCode
 
             psxTex._maxColors = (int)Mathf.Pow((int)bitDepth, 2);
 
-            QuantizedResult result = Quantize(inputTexture, psxTex._maxColors);
+            TextureQuantizer.QuantizedResult result = TextureQuantizer.Quantize(inputTexture, psxTex._maxColors);
 
             foreach (Vector3 color in result.Palette)
             {

@@ -1,19 +1,22 @@
 using UnityEngine;
 using UnityEditor;
-using PSXSplash.RuntimeCode;
+using SplashEdit.RuntimeCode;
 
-[CustomEditor(typeof(PSXSceneExporter))]
-public class PSXSceneExporterEditor : Editor
+namespace SplashEdit.EditorCode
 {
-    public override void OnInspectorGUI()
+    [CustomEditor(typeof(PSXSceneExporter))]
+    public class PSXSceneExporterEditor : Editor
     {
-        DrawDefaultInspector();
-
-        PSXSceneExporter comp = (PSXSceneExporter)target;
-        if (GUILayout.Button("Export"))
+        public override void OnInspectorGUI()
         {
-            comp.Export();
-        }
+            DrawDefaultInspector();
 
+            PSXSceneExporter comp = (PSXSceneExporter)target;
+            if (GUILayout.Button("Export"))
+            {
+                comp.Export();
+            }
+
+        }
     }
 }

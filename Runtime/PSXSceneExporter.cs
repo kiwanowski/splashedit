@@ -5,7 +5,7 @@ using UnityEditor.Overlays;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-namespace PSXSplash.RuntimeCode
+namespace SplashEdit.RuntimeCode
 {
 
   [ExecuteInEditMode]
@@ -21,7 +21,7 @@ namespace PSXSplash.RuntimeCode
     private bool verticalLayout;
     private List<ProhibitedArea> prohibitedAreas;
     private VRAMPixel[,] vramPixels;
-    
+
 
 
     public void Export()
@@ -54,57 +54,82 @@ namespace PSXSplash.RuntimeCode
       var packed = tp.PackTexturesIntoVRAM(_exporters);
       _exporters = packed.processedObjects;
       vramPixels = packed._vramPixels;
-      
+
     }
 
-    void ExportFile() {
+    void ExportFile()
+    {
       string path = EditorUtility.SaveFilePanel("Select Output File", "", "output", "bin");
-        int totalFaces = 0;
-        using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
+      int totalFaces = 0;
+      using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
+      {
+        // VramPixels are always 1MB
+        for (int y = 0; y < vramPixels.GetLength(1); y++)
         {
-            // VramPixels are always 1MB
-            for (int y = 0; y < vramPixels.GetLength(1); y++)
-            {
-                for (int x = 0; x < vramPixels.GetLength(0); x++)
-                {
-                    writer.Write(vramPixels[x, y].Pack());
-                }
-            }
-            writer.Write((ushort) _exporters.Length);
-            foreach(PSXObjectExporter exporter in _exporters) {
-
-              int expander = 16 / ((int) exporter.Texture.BitDepth);
-
-              totalFaces += exporter.Mesh.Triangles.Count;
-              writer.Write((ushort) exporter.Mesh.Triangles.Count);
-              writer.Write((byte) exporter.Texture.BitDepth);
-              writer.Write((byte)exporter.Texture.TexpageX);
-              writer.Write((byte)exporter.Texture.TexpageY);
-              writer.Write((ushort)exporter.Texture.ClutPackingX);
-              writer.Write((ushort)exporter.Texture.ClutPackingY);
-              writer.Write((byte) 0);
-              foreach(Tri tri in exporter.Mesh.Triangles) {
-                writer.Write((short)tri.v0.vx);
-                writer.Write((short)tri.v0.vy);
-                writer.Write((short)tri.v0.vz);
-                writer.Write((byte)(tri.v0.u + exporter.Texture.PackingX * expander));
-                writer.Write((byte)(tri.v0.v + exporter.Texture.PackingY));
-
-                writer.Write((short)tri.v1.vx);
-                writer.Write((short)tri.v1.vy);
-                writer.Write((short)tri.v1.vz);
-                writer.Write((byte)(tri.v1.u + exporter.Texture.PackingX * expander));
-                writer.Write((byte)(tri.v1.v + exporter.Texture.PackingY));
-
-                writer.Write((short)tri.v2.vx);
-                writer.Write((short)tri.v2.vy);
-                writer.Write((short)tri.v2.vz);
-                writer.Write((byte)(tri.v2.u + exporter.Texture.PackingX * expander));
-                writer.Write((byte)(tri.v2.v + exporter.Texture.PackingY));
-              }
-            }
+          for (int x = 0; x < vramPixels.GetLength(0); x++)
+          {
+            writer.Write(vramPixels[x, y].Pack());
+          }
         }
-        Debug.Log(totalFaces);
+        writer.Write((ushort)_exporters.Length);
+        foreach (PSXObjectExporter exporter in _exporters)
+        {
+
+          int expander = 16 / ((int)exporter.Texture.BitDepth);
+
+          totalFaces += exporter.Mesh.Triangles.Count;
+          writer.Write((ushort)exporter.Mesh.Triangles.Count);
+          writer.Write((byte)exporter.Texture.BitDepth);
+          writer.Write((byte)exporter.Texture.TexpageX);
+          writer.Write((byte)exporter.Texture.TexpageY);
+          writer.Write((ushort)exporter.Texture.ClutPackingX);
+          writer.Write((ushort)exporter.Texture.ClutPackingY);
+          writer.Write((byte)0);
+          foreach (Tri tri in exporter.Mesh.Triangles)
+          {
+            writer.Write((short)tri.v0.vx);
+            writer.Write((short)tri.v0.vy);
+            writer.Write((short)tri.v0.vz);
+            writer.Write((short)tri.v0.nx);
+            writer.Write((short)tri.v0.ny);
+            writer.Write((short)tri.v0.nz);
+            writer.Write((byte)(tri.v0.u + exporter.Texture.PackingX * expander));
+            writer.Write((byte)(tri.v0.v + exporter.Texture.PackingY));
+            writer.Write((byte) tri.v0.r);
+            writer.Write((byte) tri.v0.g);
+            writer.Write((byte) tri.v0.b);
+            for(int i = 0; i < 7; i ++) writer.Write((byte) 0);
+
+            writer.Write((short)tri.v1.vx);
+            writer.Write((short)tri.v1.vy);
+            writer.Write((short)tri.v1.vz);
+            writer.Write((short)tri.v1.nx);
+            writer.Write((short)tri.v1.ny);
+            writer.Write((short)tri.v1.nz);
+            writer.Write((byte)(tri.v1.u + exporter.Texture.PackingX * expander));
+            writer.Write((byte)(tri.v1.v + exporter.Texture.PackingY));
+            writer.Write((byte) tri.v1.r);
+            writer.Write((byte) tri.v1.g);
+            writer.Write((byte) tri.v1.b);
+            for(int i = 0; i < 7; i ++) writer.Write((byte) 0);
+
+            writer.Write((short)tri.v2.vx);
+            writer.Write((short)tri.v2.vy);
+            writer.Write((short)tri.v2.vz);
+            writer.Write((short)tri.v2.nx);
+            writer.Write((short)tri.v2.ny);
+            writer.Write((short)tri.v2.nz);
+            writer.Write((byte)(tri.v2.u + exporter.Texture.PackingX * expander));
+            writer.Write((byte)(tri.v2.v + exporter.Texture.PackingY));
+            writer.Write((byte) tri.v2.r);
+            writer.Write((byte) tri.v2.g);
+            writer.Write((byte) tri.v2.b);
+            for(int i = 0; i < 7; i ++) writer.Write((byte) 0);
+
+          }
+        }
+      }
+      Debug.Log(totalFaces);
     }
 
     public void LoadData()

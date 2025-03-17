@@ -3,7 +3,7 @@ using System.Linq;
 using UnityEngine;
 
 
-namespace PSXSplash.RuntimeCode
+namespace SplashEdit.RuntimeCode
 {
 
     /// <summary>
