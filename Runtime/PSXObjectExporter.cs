@@ -19,8 +19,11 @@ namespace SplashEdit.RuntimeCode
             Renderer renderer = GetComponent<Renderer>();
             if (renderer.sharedMaterial != null && renderer.sharedMaterial.mainTexture is Texture2D texture)
             {
-                Texture = PSXTexture2D.CreateFromTexture2D(texture, BitDepth);
-                Texture.OriginalTexture = texture; // Stores reference to the original texture
+                if (Texture == null || Texture.NeedUpdate(BitDepth, texture))
+                {
+                    Texture = PSXTexture2D.CreateFromTexture2D(texture, BitDepth);
+                    Texture.OriginalTexture = texture; // Stores reference to the original texture
+                }
             }
             else
             {
