@@ -26,7 +26,7 @@ namespace SplashEdit.RuntimeCode
 
         public void Export()
         {
-            LoadData();
+            _psxData = Utils.LoadData(out selectedResolution, out dualBuffering, out verticalLayout, out prohibitedAreas);
             _exporters = FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
             foreach (PSXObjectExporter exp in _exporters)
             {
@@ -39,10 +39,7 @@ namespace SplashEdit.RuntimeCode
 
         void PackTextures()
         {
-
-            Rect buffer1 = new Rect(0, 0, selectedResolution.x, selectedResolution.y);
-            Rect buffer2 = verticalLayout ? new Rect(0, 256, selectedResolution.x, selectedResolution.y)
-                                          : new Rect(selectedResolution.x, 0, selectedResolution.x, selectedResolution.y);
+            (Rect buffer1, Rect buffer2) = Utils.BufferForResolution(selectedResolution, verticalLayout);
 
             List<Rect> framebuffers = new List<Rect> { buffer1 };
             if (dualBuffering)
@@ -109,24 +106,6 @@ namespace SplashEdit.RuntimeCode
                 }
             }
             Debug.Log(totalFaces);
-        }
-
-        public void LoadData()
-        {
-            _psxData = AssetDatabase.LoadAssetAtPath<PSXData>(_psxDataPath);
-
-            if (!_psxData)
-            {
-                _psxData = ScriptableObject.CreateInstance<PSXData>();
-                AssetDatabase.CreateAsset(_psxData, _psxDataPath);
-                AssetDatabase.SaveAssets();
-                AssetDatabase.Refresh();
-            }
-
-            selectedResolution = _psxData.OutputResolution;
-            dualBuffering = _psxData.DualBuffering;
-            verticalLayout = _psxData.VerticalBuffering;
-            prohibitedAreas = _psxData.ProhibitedAreas;
         }
 
         void OnDrawGizmos()
