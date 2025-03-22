@@ -1,9 +1,13 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEditor.Overlays;
 using UnityEngine;
+using UnityEngine.Diagnostics;
 using UnityEngine.SceneManagement;
+using UnityEngine.TextCore.Text;
 
 namespace SplashEdit.RuntimeCode
 {
@@ -12,6 +16,7 @@ namespace SplashEdit.RuntimeCode
   public class PSXSceneExporter : MonoBehaviour
   {
     private PSXObjectExporter[] _exporters;
+    private TextureAtlas[] _atlases;
 
     private PSXData _psxData;
     private readonly string _psxDataPath = "Assets/PSXData.asset";
@@ -53,7 +58,7 @@ namespace SplashEdit.RuntimeCode
       VRAMPacker tp = new VRAMPacker(framebuffers, prohibitedAreas);
       var packed = tp.PackTexturesIntoVRAM(_exporters);
       _exporters = packed.processedObjects;
-      vramPixels = packed._vramPixels;
+      _atlases = packed.atlases;
 
     }
 
@@ -61,75 +66,199 @@ namespace SplashEdit.RuntimeCode
     {
       string path = EditorUtility.SaveFilePanel("Select Output File", "", "output", "bin");
       int totalFaces = 0;
+
+      // Lists for mesh data offsets.
+      List<long> offsetPlaceholderPositions = new List<long>();
+      List<long> meshDataOffsets = new List<long>();
+
+      // Lists for atlas data offsets.
+      List<long> atlasOffsetPlaceholderPositions = new List<long>();
+      List<long> atlasDataOffsets = new List<long>();
+
       using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
       {
-        // VramPixels are always 1MB
-        for (int y = 0; y < vramPixels.GetLength(1); y++)
-        {
-          for (int x = 0; x < vramPixels.GetLength(0); x++)
-          {
-            writer.Write(vramPixels[x, y].Pack());
-          }
-        }
+        // Header
+        writer.Write('S');
+        writer.Write('P');
+        writer.Write((ushort)1);
         writer.Write((ushort)_exporters.Length);
+        writer.Write((ushort)_atlases.Length);
+        // Start of Metadata section
+
+        // GameObject section (exporters)
         foreach (PSXObjectExporter exporter in _exporters)
         {
+          // Write object's position
+          writer.Write((int)PSXTrig.ConvertCoordinateToPSX(transform.position.x));
+          writer.Write((int)PSXTrig.ConvertCoordinateToPSX(transform.position.y));
+          writer.Write((int)PSXTrig.ConvertCoordinateToPSX(transform.position.z));
 
-          int expander = 16 / ((int)exporter.Texture.BitDepth);
+          int[,] rotationMatrix = PSXTrig.ConvertRotationToPSXMatrix(exporter.transform.rotation);
+          writer.Write((int)rotationMatrix[0, 0]);
+          writer.Write((int)rotationMatrix[0, 1]);
+          writer.Write((int)rotationMatrix[0, 2]);
+          writer.Write((int)rotationMatrix[1, 0]);
+          writer.Write((int)rotationMatrix[1, 1]);
+          writer.Write((int)rotationMatrix[1, 2]);
+          writer.Write((int)rotationMatrix[2, 0]);
+          writer.Write((int)rotationMatrix[2, 1]);
+          writer.Write((int)rotationMatrix[2, 2]);
+
+          // Set up texture page attributes
+          TPageAttr tpage = new TPageAttr();
+          tpage.SetPageX(exporter.Texture.TexpageX);
+          tpage.SetPageX(exporter.Texture.TexpageY);
+          switch (exporter.Texture.BitDepth)
+          {
+            case PSXBPP.TEX_4BIT:
+              tpage.Set(ColorMode.Mode4Bit);
+              break;
+            case PSXBPP.TEX_8BIT:
+              tpage.Set(ColorMode.Mode8Bit);
+              break;
+            case PSXBPP.TEX_16BIT:
+              tpage.Set(ColorMode.Mode16Bit);
+              break;
+          }
+          tpage.SetDithering(true);
+          writer.Write((ushort)tpage.info);
+          writer.Write((ushort)exporter.Mesh.Triangles.Count);
+
+          // Write placeholder for mesh data offset and record its position.
+          offsetPlaceholderPositions.Add(writer.BaseStream.Position);
+          writer.Write((int)0); // 4-byte placeholder for mesh data offset.
+        }
+
+        // Atlas metadata section
+        foreach (TextureAtlas atlas in _atlases)
+        {
+          // Write placeholder for texture atlas raw data offset.
+          atlasOffsetPlaceholderPositions.Add(writer.BaseStream.Position);
+          writer.Write((int)0); // 4-byte placeholder for atlas data offset.
+
+          writer.Write((ushort)atlas.Width);
+          writer.Write((ushort)TextureAtlas.Height);
+          writer.Write((ushort)atlas.PositionX);
+          writer.Write((ushort)atlas.PositionY);
+        }
+
+        // Start of data section
+
+        // Mesh data section: Write mesh data for each exporter.
+        foreach (PSXObjectExporter exporter in _exporters)
+        {
+          // Record the current offset for this exporter's mesh data.
+          long meshDataOffset = writer.BaseStream.Position;
+          meshDataOffsets.Add(meshDataOffset);
 
           totalFaces += exporter.Mesh.Triangles.Count;
-          writer.Write((ushort)exporter.Mesh.Triangles.Count);
-          writer.Write((byte)exporter.Texture.BitDepth);
-          writer.Write((byte)exporter.Texture.TexpageX);
-          writer.Write((byte)exporter.Texture.TexpageY);
-          writer.Write((ushort)exporter.Texture.ClutPackingX);
-          writer.Write((ushort)exporter.Texture.ClutPackingY);
-          writer.Write((byte)0);
+
+          int expander = 16 / ((int)exporter.Texture.BitDepth);
           foreach (Tri tri in exporter.Mesh.Triangles)
           {
+            // Write vertices coordinates
             writer.Write((short)tri.v0.vx);
             writer.Write((short)tri.v0.vy);
             writer.Write((short)tri.v0.vz);
-            writer.Write((short)tri.v0.nx);
-            writer.Write((short)tri.v0.ny);
-            writer.Write((short)tri.v0.nz);
-            writer.Write((byte)(tri.v0.u + exporter.Texture.PackingX * expander));
-            writer.Write((byte)(tri.v0.v + exporter.Texture.PackingY));
-            writer.Write((byte) tri.v0.r);
-            writer.Write((byte) tri.v0.g);
-            writer.Write((byte) tri.v0.b);
-            for(int i = 0; i < 7; i ++) writer.Write((byte) 0);
 
             writer.Write((short)tri.v1.vx);
             writer.Write((short)tri.v1.vy);
             writer.Write((short)tri.v1.vz);
-            writer.Write((short)tri.v1.nx);
-            writer.Write((short)tri.v1.ny);
-            writer.Write((short)tri.v1.nz);
-            writer.Write((byte)(tri.v1.u + exporter.Texture.PackingX * expander));
-            writer.Write((byte)(tri.v1.v + exporter.Texture.PackingY));
-            writer.Write((byte) tri.v1.r);
-            writer.Write((byte) tri.v1.g);
-            writer.Write((byte) tri.v1.b);
-            for(int i = 0; i < 7; i ++) writer.Write((byte) 0);
 
             writer.Write((short)tri.v2.vx);
             writer.Write((short)tri.v2.vy);
             writer.Write((short)tri.v2.vz);
-            writer.Write((short)tri.v2.nx);
-            writer.Write((short)tri.v2.ny);
-            writer.Write((short)tri.v2.nz);
+
+            // Write vertex normals for v0 only
+            writer.Write((short)tri.v0.nx);
+            writer.Write((short)tri.v0.ny);
+            writer.Write((short)tri.v0.nz);
+
+            // Write UVs for each vertex, adjusting for texture packing
+            writer.Write((byte)(tri.v0.u + exporter.Texture.PackingX * expander));
+            writer.Write((byte)(tri.v0.v + exporter.Texture.PackingY));
+
+            writer.Write((byte)(tri.v1.u + exporter.Texture.PackingX * expander));
+            writer.Write((byte)(tri.v1.v + exporter.Texture.PackingY));
+
             writer.Write((byte)(tri.v2.u + exporter.Texture.PackingX * expander));
             writer.Write((byte)(tri.v2.v + exporter.Texture.PackingY));
-            writer.Write((byte) tri.v2.r);
-            writer.Write((byte) tri.v2.g);
-            writer.Write((byte) tri.v2.b);
-            for(int i = 0; i < 7; i ++) writer.Write((byte) 0);
 
+            writer.Write((ushort)0); // padding
+
+            // Write vertex colors with padding
+            writer.Write((byte)tri.v0.r);
+            writer.Write((byte)tri.v0.g);
+            writer.Write((byte)tri.v0.b);
+            writer.Write((byte)0); // padding
+
+            writer.Write((byte)tri.v1.r);
+            writer.Write((byte)tri.v1.g);
+            writer.Write((byte)tri.v1.b);
+            writer.Write((byte)0); // padding
+
+            writer.Write((byte)tri.v2.r);
+            writer.Write((byte)tri.v2.g);
+            writer.Write((byte)tri.v2.b);
+            writer.Write((byte)0); // padding
           }
+        }
+
+        // Atlas data section: Write raw texture data for each atlas.
+        foreach (TextureAtlas atlas in _atlases)
+        {
+          AlignToFourBytes(writer);
+          // Record the current offset for this atlas's data.
+          long atlasDataOffset = writer.BaseStream.Position;
+          atlasDataOffsets.Add(atlasDataOffset);
+
+          // Write the atlas's raw texture data.
+          for (int y = 0; y < atlas.vramPixels.GetLength(1); y++)
+          {
+            for (int x = 0; x < atlas.vramPixels.GetLength(0); x++)
+            {
+              writer.Write(atlas.vramPixels[x, y].Pack());
+            }
+          }
+        }
+
+        // Backfill the mesh data offsets into the metadata section.
+        if (offsetPlaceholderPositions.Count == meshDataOffsets.Count)
+        {
+          for (int i = 0; i < offsetPlaceholderPositions.Count; i++)
+          {
+            writer.Seek((int)offsetPlaceholderPositions[i], SeekOrigin.Begin);
+            writer.Write((int)meshDataOffsets[i]);
+          }
+        }
+        else
+        {
+          Debug.LogError("Mismatch between metadata mesh offset placeholders and mesh data blocks!");
+        }
+
+        // Backfill the atlas data offsets into the metadata section.
+        if (atlasOffsetPlaceholderPositions.Count == atlasDataOffsets.Count)
+        {
+          for (int i = 0; i < atlasOffsetPlaceholderPositions.Count; i++)
+          {
+            writer.Seek((int)atlasOffsetPlaceholderPositions[i], SeekOrigin.Begin);
+            writer.Write((int)atlasDataOffsets[i]);
+          }
+        }
+        else
+        {
+          Debug.LogError("Mismatch between atlas offset placeholders and atlas data blocks!");
         }
       }
       Debug.Log(totalFaces);
+    }
+
+    void AlignToFourBytes(BinaryWriter writer)
+    {
+      long position = writer.BaseStream.Position;
+      int padding = (int)(4 - (position % 4)) % 4; // Compute needed padding
+      Debug.Log($"aligned {padding} bytes");
+      writer.Write(new byte[padding]); // Write zero padding
     }
 
     public void LoadData()

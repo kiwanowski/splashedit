@@ -15,6 +15,7 @@ namespace SplashEdit.RuntimeCode
         public int PositionY;               // Y position of the atlas in VRAM.
         public int Width;                   // Width of the atlas.
         public const int Height = 256;      // Fixed height for all atlases.
+        public VRAMPixel[,] vramPixels;
         public List<PSXTexture2D> ContainedTextures = new List<PSXTexture2D>(); // Textures packed in this atlas.
     }
 
@@ -62,7 +63,7 @@ namespace SplashEdit.RuntimeCode
         /// </summary>
         /// <param name="objects">Array of PSXObjectExporter objects to process.</param>
         /// <returns>Tuple containing processed objects and the VRAM pixel array.</returns>
-        public (PSXObjectExporter[] processedObjects, VRAMPixel[,] _vramPixels) PackTexturesIntoVRAM(PSXObjectExporter[] objects)
+        public (PSXObjectExporter[] processedObjects, TextureAtlas[] atlases, VRAMPixel[,] _vramPixels) PackTexturesIntoVRAM(PSXObjectExporter[] objects)
         {
             List<PSXTexture2D> uniqueTextures = new List<PSXTexture2D>();
             // Group objects by texture bit depth (high to low).
@@ -87,11 +88,11 @@ namespace SplashEdit.RuntimeCode
                 foreach (var obj in group.OrderByDescending(obj => obj.Texture.QuantizedWidth * obj.Texture.Height))
                 {
                     // Remove duplicate textures
-                    if (uniqueTextures.Any(tex => tex.OriginalTexture.GetInstanceID() == obj.Texture.OriginalTexture.GetInstanceID() && tex.BitDepth == obj.Texture.BitDepth))
+                    /*if (uniqueTextures.Any(tex => tex.OriginalTexture.GetInstanceID() == obj.Texture.OriginalTexture.GetInstanceID() && tex.BitDepth == obj.Texture.BitDepth))
                     {
                         obj.Texture = uniqueTextures.First(tex => tex.OriginalTexture.GetInstanceID() == obj.Texture.OriginalTexture.GetInstanceID());
                         continue;
-                    }
+                    }*/
 
                     // Try to place the texture in the current atlas.
                     if (!TryPlaceTextureInAtlas(atlas, obj.Texture))
@@ -116,7 +117,7 @@ namespace SplashEdit.RuntimeCode
 
             // Build the final VRAM pixel array from placed textures and CLUTs.
             BuildVram();
-            return (objects, _vramPixels);
+            return (objects, _finalizedAtlases.ToArray(), _vramPixels);
         }
 
         /// <summary>
@@ -249,13 +250,17 @@ namespace SplashEdit.RuntimeCode
         {
             foreach (TextureAtlas atlas in _finalizedAtlases)
             {
+                atlas.vramPixels = new VRAMPixel[atlas.Width, TextureAtlas.Height];
+
                 foreach (PSXTexture2D texture in atlas.ContainedTextures)
                 {
+                    
                     // Copy texture image data into VRAM using atlas and texture packing offsets.
                     for (int y = 0; y < texture.Height; y++)
                     {
                         for (int x = 0; x < texture.QuantizedWidth; x++)
                         {
+                            atlas.vramPixels[x + texture.PackingX, y + texture.PackingY] = texture.ImageData[x, y];
                             _vramPixels[x + atlas.PositionX + texture.PackingX, y + atlas.PositionY + texture.PackingY] = texture.ImageData[x, y];
                         }
                     }
