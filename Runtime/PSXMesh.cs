@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Diagnostics;
 
 namespace SplashEdit.RuntimeCode
 {
@@ -44,7 +45,7 @@ namespace SplashEdit.RuntimeCode
         /// <param name="textureHeight">Height of the texture (default is 256).</param>
         /// <param name="transform">Optional transform to convert vertices to world space.</param>
         /// <returns>A new PSXMesh containing the converted triangles.</returns>
-        public static PSXMesh CreateFromUnityMesh(Mesh mesh, int textureWidth = 256, int textureHeight = 256, Transform transform = null)
+        public static PSXMesh CreateFromUnityMesh(Mesh mesh, float GTEScaling, int textureWidth = 256, int textureHeight = 256, Transform transform = null)
         {
             PSXMesh psxMesh = new PSXMesh { Triangles = new List<Tri>() };
 
@@ -72,9 +73,9 @@ namespace SplashEdit.RuntimeCode
                 Vector3 v2 = transform ? transform.TransformPoint(vertices[vid2]) : vertices[vid2];
 
                 // Convert vertices to PSX format including fixed-point conversion and shading.
-                PSXVertex psxV0 = ConvertToPSXVertex(v0, normals[vid0], uv[vid0], lightDir, lightColor, textureWidth, textureHeight);
-                PSXVertex psxV1 = ConvertToPSXVertex(v1, normals[vid1], uv[vid1], lightDir, lightColor, textureWidth, textureHeight);
-                PSXVertex psxV2 = ConvertToPSXVertex(v2, normals[vid2], uv[vid2], lightDir, lightColor, textureWidth, textureHeight);
+                PSXVertex psxV0 = ConvertToPSXVertex(v0, GTEScaling, normals[vid0], uv[vid0], lightDir, lightColor, textureWidth, textureHeight);
+                PSXVertex psxV1 = ConvertToPSXVertex(v1, GTEScaling, normals[vid1], uv[vid1], lightDir, lightColor, textureWidth, textureHeight);
+                PSXVertex psxV2 = ConvertToPSXVertex(v2, GTEScaling, normals[vid2], uv[vid2], lightDir, lightColor, textureWidth, textureHeight);
 
                 // Add the constructed triangle to the mesh.
                 psxMesh.Triangles.Add(new Tri { v0 = psxV0, v1 = psxV1, v2 = psxV2 });
@@ -94,12 +95,10 @@ namespace SplashEdit.RuntimeCode
         /// <param name="textureWidth">Width of the texture for UV scaling.</param>
         /// <param name="textureHeight">Height of the texture for UV scaling.</param>
         /// <returns>A PSXVertex with converted coordinates, normals, UVs, and color.</returns>
-        private static PSXVertex ConvertToPSXVertex(Vector3 vertex, Vector3 normal, Vector2 uv, Vector3 lightDir, Color lightColor, int textureWidth, int textureHeight)
+        private static PSXVertex ConvertToPSXVertex(Vector3 vertex, float GTEScaling, Vector3 normal, Vector2 uv, Vector3 lightDir, Color lightColor, int textureWidth, int textureHeight)
         {
             // Calculate light intensity based on the angle between the normalized normal and light direction.
             float lightIntensity = Mathf.Clamp01(Vector3.Dot(normal.normalized, lightDir));
-            // Remap the intensity to a specific range for a softer shading effect.
-            lightIntensity = Mathf.Lerp(0.4f, 0.7f, lightIntensity);
 
             // Compute the final shaded color by multiplying the light color by the intensity.
             Color shadedColor = lightColor * lightIntensity;
@@ -107,14 +106,14 @@ namespace SplashEdit.RuntimeCode
             PSXVertex psxVertex = new PSXVertex
             {
                 // Convert position to fixed-point, clamping values to a defined range.
-                vx = (short)(Mathf.Clamp(vertex.x, -4f, 3.999f) * 4096),
-                vy = (short)(Mathf.Clamp(-vertex.y, -4f, 3.999f) * 4096),
-                vz = (short)(Mathf.Clamp(vertex.z, -4f, 3.999f) * 4096),
+                vx = (short)PSXTrig.ConvertCoordinateToPSX(vertex.x, GTEScaling),
+                vy = (short)PSXTrig.ConvertCoordinateToPSX(-vertex.y, GTEScaling),
+                vz = (short)PSXTrig.ConvertCoordinateToPSX(vertex.z, GTEScaling),
 
                 // Convert normals to fixed-point.
-                nx = (short)(Mathf.Clamp(normal.x, -4f, 3.999f) * 4096),
-                ny = (short)(Mathf.Clamp(-normal.y, -4f, 3.999f) * 4096),
-                nz = (short)(Mathf.Clamp(normal.z, -4f, 3.999f) * 4096),
+                nx = (short)PSXTrig.ConvertCoordinateToPSX(normal.x),
+                ny = (short)PSXTrig.ConvertCoordinateToPSX(-normal.y),
+                nz = (short)PSXTrig.ConvertCoordinateToPSX(normal.z),
 
                 // Map UV coordinates to a byte range after scaling based on texture dimensions.
                 u = (byte)(Mathf.Clamp((uv.x * (textureWidth - 1)), 0, 255)),

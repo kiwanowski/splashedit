@@ -45,15 +45,11 @@ namespace SplashEdit.RuntimeCode
     public static class PSXTrig
     {
 
-        public static short ConvertCoordinateToPSX(float value)
+        public static short ConvertCoordinateToPSX(float value, float GTEScaling = 1.0f)
         {
-            return (short)(Mathf.Clamp(value, -4f, 3.999f) * 4096);
+            return (short)(Mathf.Clamp(value/GTEScaling, -4f, 3.999f) * 4096);
         }
 
-        public static short ConvertRadiansToPSX(float value)
-        {
-            return (short)(Mathf.Clamp(value, -4f, 3.999f) * 4096f / Mathf.PI);
-        }
 
         public static int[,] ConvertRotationToPSXMatrix(Quaternion rotation)
         {
@@ -142,23 +138,23 @@ namespace SplashEdit.RuntimeCode
         }
 
         public override string ToString() => $"Info: 0x{info:X4}";
-    }
 
-    // Define the enums for SemiTrans and ColorMode (assuming their values)
-    public enum SemiTrans : uint
-    {
-        None = 0,
-        Type1 = 1,
-        Type2 = 2,
-        Type3 = 3
-    }
 
-    public enum ColorMode : uint
-    {
-        Mode4Bit = 0,
-        Mode8Bit = 1,
-        Mode16Bit = 2
-    }
+        // Define the enums for SemiTrans and ColorMode (assuming their values)
+        public enum SemiTrans : uint
+        {
+            None = 0,
+            Type1 = 1,
+            Type2 = 2,
+            Type3 = 3
+        }
 
+        public enum ColorMode : uint
+        {
+            Mode4Bit = 0,
+            Mode8Bit = 1,
+            Mode16Bit = 2
+        }
+    }
 }
 

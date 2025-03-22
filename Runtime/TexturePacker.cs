@@ -299,19 +299,5 @@ namespace SplashEdit.RuntimeCode
             return !(overlapsAtlas || overlapsReserved || overlapsCLUT);
         }
 
-        /// <summary>
-        /// Calculates the texpage index from given VRAM coordinates.
-        /// This helper method divides VRAM into columns and rows.
-        /// </summary>
-        /// <param name="x">The X coordinate in VRAM.</param>
-        /// <param name="y">The Y coordinate in VRAM.</param>
-        /// <returns>The calculated texpage index.</returns>
-        private int CalculateTexpage(int x, int y)
-        {
-            int columns = 16;
-            int colIndex = x / 64;
-            int rowIndex = y / 256;
-            return (rowIndex * columns) + colIndex;
-        }
     }
 }

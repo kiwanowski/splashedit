@@ -1,13 +1,7 @@
-using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using UnityEditor;
-using UnityEditor.Overlays;
 using UnityEngine;
-using UnityEngine.Diagnostics;
-using UnityEngine.SceneManagement;
-using UnityEngine.TextCore.Text;
 
 namespace SplashEdit.RuntimeCode
 {
@@ -15,6 +9,9 @@ namespace SplashEdit.RuntimeCode
   [ExecuteInEditMode]
   public class PSXSceneExporter : MonoBehaviour
   {
+
+    public float GTEScaling = 100.0f;
+
     private PSXObjectExporter[] _exporters;
     private TextureAtlas[] _atlases;
 
@@ -36,7 +33,7 @@ namespace SplashEdit.RuntimeCode
       foreach (PSXObjectExporter exp in _exporters)
       {
         exp.CreatePSXTexture2D();
-        exp.CreatePSXMesh();
+        exp.CreatePSXMesh(GTEScaling);
       }
       PackTextures();
       ExportFile();
@@ -107,17 +104,17 @@ namespace SplashEdit.RuntimeCode
           // Set up texture page attributes
           TPageAttr tpage = new TPageAttr();
           tpage.SetPageX(exporter.Texture.TexpageX);
-          tpage.SetPageX(exporter.Texture.TexpageY);
+          tpage.SetPageY(exporter.Texture.TexpageY);
           switch (exporter.Texture.BitDepth)
           {
             case PSXBPP.TEX_4BIT:
-              tpage.Set(ColorMode.Mode4Bit);
+              tpage.Set(TPageAttr.ColorMode.Mode4Bit);
               break;
             case PSXBPP.TEX_8BIT:
-              tpage.Set(ColorMode.Mode8Bit);
+              tpage.Set(TPageAttr.ColorMode.Mode8Bit);
               break;
             case PSXBPP.TEX_16BIT:
-              tpage.Set(ColorMode.Mode16Bit);
+              tpage.Set(TPageAttr.ColorMode.Mode16Bit);
               break;
           }
           tpage.SetDithering(true);
@@ -282,6 +279,10 @@ namespace SplashEdit.RuntimeCode
     void OnDrawGizmos()
     {
       Gizmos.DrawIcon(transform.position, "Packages/net.psxsplash.splashedit/Icons/PSXSceneExporter.png", true);
+      Vector3 sceneOrigin = new Vector3(0,0,0);
+      Vector3 cubeSize = new Vector3(8.0f * GTEScaling, 8.0f * GTEScaling, 8.0f * GTEScaling);
+      Gizmos.color = Color.red;
+      Gizmos.DrawWireCube(sceneOrigin, cubeSize);
     }
   }
 }

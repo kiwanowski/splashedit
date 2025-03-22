@@ -29,7 +29,7 @@ namespace SplashEdit.RuntimeCode
         /// <summary>
         /// Converts the object's mesh into a PlayStation-compatible mesh.
         /// </summary>
-        public void CreatePSXMesh()
+        public void CreatePSXMesh(float GTEScaling)
         {
             MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
             if (meshFilter != null)
@@ -37,12 +37,12 @@ namespace SplashEdit.RuntimeCode
                 if (MeshIsStatic)
                 {
                     // Static meshes take object transformation into account
-                    Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.sharedMesh, Texture.Width, Texture.Height, transform);
+                    Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.sharedMesh, GTEScaling, Texture.Width, Texture.Height, transform);
                 }
                 else
                 {
                     // Dynamic meshes do not consider object transformation
-                    Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.sharedMesh, Texture.Width, Texture.Height);
+                    Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.sharedMesh, GTEScaling, Texture.Width, Texture.Height);
                 }
             }
         }
