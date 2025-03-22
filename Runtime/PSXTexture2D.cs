@@ -159,7 +159,7 @@ namespace SplashEdit.RuntimeCode
                 return psxTex;
             }
 
-            psxTex._maxColors = (int)Mathf.Pow((int)bitDepth, 2);
+            psxTex._maxColors = (int)Mathf.Pow(2, (int)bitDepth);
 
             TextureQuantizer.QuantizedResult result = TextureQuantizer.Quantize(inputTexture, psxTex._maxColors);
 
@@ -230,7 +230,7 @@ namespace SplashEdit.RuntimeCode
                 {
                     for (int x = 0; x < Height; x++)
                     {
-                        tex.SetPixel(x, y, ImageData[x, y].GetUnityColor());
+                        tex.SetPixel(x, Height - 1 - y, ImageData[x, y].GetUnityColor());
                     }
                 }
 
