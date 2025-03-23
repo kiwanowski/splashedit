@@ -227,7 +227,7 @@ namespace SplashEdit.RuntimeCode
                         if (IsPlacementValid(candidate))
                         {
                             _allocatedCLUTs.Add(candidate);
-                            texture.ClutPackingX = x;
+                            texture.ClutPackingX = (ushort)(x/16);
                             texture.ClutPackingY = y;
                             placed = true;
                             break;

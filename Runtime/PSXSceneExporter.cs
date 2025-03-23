@@ -72,6 +72,7 @@ namespace SplashEdit.RuntimeCode
       List<long> atlasOffsetPlaceholderPositions = new List<long>();
       List<long> atlasDataOffsets = new List<long>();
 
+
       using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
       {
         // Header
@@ -101,6 +102,8 @@ namespace SplashEdit.RuntimeCode
           writer.Write((int)rotationMatrix[2, 1]);
           writer.Write((int)rotationMatrix[2, 2]);
 
+          writer.Write((ushort)exporter.Mesh.Triangles.Count);
+
           // Set up texture page attributes
           TPageAttr tpage = new TPageAttr();
           tpage.SetPageX(exporter.Texture.TexpageX);
@@ -119,7 +122,27 @@ namespace SplashEdit.RuntimeCode
           }
           tpage.SetDithering(true);
           writer.Write((ushort)tpage.info);
-          writer.Write((ushort)exporter.Mesh.Triangles.Count);
+          writer.Write((ushort)exporter.Texture.ClutPackingX);
+          writer.Write((ushort)exporter.Texture.ClutPackingY);
+          if (exporter.Texture.BitDepth != PSXBPP.TEX_16BIT)
+          {
+            foreach (VRAMPixel color in exporter.Texture.ColorPalette)
+            {
+              writer.Write((ushort)color.Pack());
+            }
+            for (int i = exporter.Texture.ColorPalette.Count; i < 256; i++)
+            {
+              writer.Write((ushort)0);
+            }
+          }
+          else
+          {
+            for (int i = 0; i < 256; i++)
+            {
+              writer.Write((ushort)0);
+            }
+          }
+
 
           // Write placeholder for mesh data offset and record its position.
           offsetPlaceholderPositions.Add(writer.BaseStream.Position);
@@ -279,7 +302,7 @@ namespace SplashEdit.RuntimeCode
     void OnDrawGizmos()
     {
       Gizmos.DrawIcon(transform.position, "Packages/net.psxsplash.splashedit/Icons/PSXSceneExporter.png", true);
-      Vector3 sceneOrigin = new Vector3(0,0,0);
+      Vector3 sceneOrigin = new Vector3(0, 0, 0);
       Vector3 cubeSize = new Vector3(8.0f * GTEScaling, 8.0f * GTEScaling, 8.0f * GTEScaling);
       Gizmos.color = Color.red;
       Gizmos.DrawWireCube(sceneOrigin, cubeSize);

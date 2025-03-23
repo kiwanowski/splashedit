@@ -22,17 +22,18 @@ The metadata section is split into two parts: **Object Descriptors** and **Atlas
 
 ### 2.1 Object (Exporter) Descriptors
 
-For each exporter, the following fields are stored sequentially:
-
 | Offset (per entry) | Size     | Type    | Description                                                          |
 | ------------------ | -------- | ------- | -------------------------------------------------------------------- |
 | 0x00               | 4        | int     | X coordinate (GTE-converted)                                         |
 | 0x04               | 4        | int     | Y coordinate (GTE-converted)                                         |
 | 0x08               | 4        | int     | Z coordinate (GTE-converted)                                         |
 | 0x0C               | 36       | int[9]  | Rotation matrix (3×3, row-major order)                               |
-| 0x30               | 2        | uint16  | Texture page attributes (encoded from page X/Y, bit depth, dithering)  |
-| 0x32               | 2        | uint16  | Number of triangles in the mesh                                    |
-| 0x34               | 4        | int     | Mesh data offset placeholder                                         |
+| 0x30               | 2        | uint16  | Number of triangles in the mesh                                      |
+| 0x32               | 2        | uint16  | Texture page attributes (encoded from page X/Y, bit depth, dithering)  |
+| 0x34               | 2        | uint16  | CLUT packing X coordinate                                           |
+| 0x36               | 2        | uint16  | CLUT packing Y coordinate                                           |
+| 0x38               | 512      | uint16[256] | Color palette (filled with zeros if 16-bit textures)                   |
+| 0x438              | 4        | int     | Mesh data offset placeholder                                        |
 
 *Each object descriptor occupies **0x38** bytes.*
 
@@ -83,3 +84,4 @@ For each texture atlas, the raw texture data is stored as a 2D array. Before wri
 | **Raw Texture Data** | The atlas data is written pixel by pixel.
 
 ---
+
