@@ -34,16 +34,7 @@ namespace SplashEdit.RuntimeCode
             MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
             if (meshFilter != null)
             {
-                if (MeshIsStatic)
-                {
-                    // Static meshes take object transformation into account
-                    Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.sharedMesh, GTEScaling, Texture.Width, Texture.Height, transform);
-                }
-                else
-                {
-                    // Dynamic meshes do not consider object transformation
-                    Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.sharedMesh, GTEScaling, Texture.Width, Texture.Height);
-                }
+                Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.sharedMesh, GTEScaling, transform, MeshIsStatic, Texture.Width, Texture.Height);
             }
         }
     }

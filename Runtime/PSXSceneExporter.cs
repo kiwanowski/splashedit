@@ -16,19 +16,20 @@ namespace SplashEdit.RuntimeCode
     private TextureAtlas[] _atlases;
 
     private PSXData _psxData;
-    private readonly string _psxDataPath = "Assets/PSXData.asset";
 
     private Vector2 selectedResolution;
     private bool dualBuffering;
     private bool verticalLayout;
     private List<ProhibitedArea> prohibitedAreas;
-    private VRAMPixel[,] vramPixels;
-
-
 
     public void Export()
     {
-      LoadData();
+      _psxData = DataStorage.LoadData();
+      selectedResolution = _psxData.OutputResolution;
+      dualBuffering = _psxData.DualBuffering;
+      verticalLayout = _psxData.VerticalBuffering;
+      prohibitedAreas = _psxData.ProhibitedAreas;
+
       _exporters = FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
       foreach (PSXObjectExporter exp in _exporters)
       {
@@ -59,8 +60,37 @@ namespace SplashEdit.RuntimeCode
 
     }
 
+    public static string PSXMatrixToStringMultiline(int[,] matrix)
+    {
+      return $@"
+RT11={matrix[0, 0],6} RT12={matrix[0, 1],6} RT13={matrix[0, 2],6}
+RT21={matrix[1, 0],6} RT22={matrix[1, 1],6} RT23={matrix[1, 2],6}
+RT31={matrix[2, 0],6} RT32={matrix[2, 1],6} RT33={matrix[2, 2],6}";
+    }
+
+    public static Vector3 ConvertPSXMatrixToEulerAngles(int[,] psxMatrix)
+    {
+      // Convert PSX fixed-point (s3.12) to float
+      float r00 = psxMatrix[0, 0] / 4096.0f;
+      float r01 = psxMatrix[0, 1] / 4096.0f;
+      float r02 = psxMatrix[0, 2] / 4096.0f;
+      float r10 = psxMatrix[1, 0] / 4096.0f;
+      float r11 = psxMatrix[1, 1] / 4096.0f;
+      float r12 = psxMatrix[1, 2] / 4096.0f;
+      float r20 = psxMatrix[2, 0] / 4096.0f;
+      float r21 = psxMatrix[2, 1] / 4096.0f;
+      float r22 = psxMatrix[2, 2] / 4096.0f;
+
+      // Compute Euler angles (YXZ order for Unity)
+      float thetaX = Mathf.Asin(-r21) * Mathf.Rad2Deg;  // X Rotation
+      float thetaY = Mathf.Atan2(r20, r22) * Mathf.Rad2Deg; // Y Rotation
+      float thetaZ = Mathf.Atan2(r01, r11) * Mathf.Rad2Deg; // Z Rotation
+
+      return new Vector3(thetaX, thetaY, thetaZ);
+    }
     void ExportFile()
     {
+
       string path = EditorUtility.SaveFilePanel("Select Output File", "", "output", "bin");
       int totalFaces = 0;
 
@@ -86,12 +116,12 @@ namespace SplashEdit.RuntimeCode
         // GameObject section (exporters)
         foreach (PSXObjectExporter exporter in _exporters)
         {
-          // Write object's position
-          writer.Write((int)PSXTrig.ConvertCoordinateToPSX(transform.position.x));
-          writer.Write((int)PSXTrig.ConvertCoordinateToPSX(transform.position.y));
-          writer.Write((int)PSXTrig.ConvertCoordinateToPSX(transform.position.z));
-
+          // Write object's transform
+          writer.Write((int)PSXTrig.ConvertCoordinateToPSX(exporter.transform.localToWorldMatrix.GetPosition().x, GTEScaling));
+          writer.Write((int)PSXTrig.ConvertCoordinateToPSX(-exporter.transform.localToWorldMatrix.GetPosition().y, GTEScaling));
+          writer.Write((int)PSXTrig.ConvertCoordinateToPSX(exporter.transform.localToWorldMatrix.GetPosition().z, GTEScaling));
           int[,] rotationMatrix = PSXTrig.ConvertRotationToPSXMatrix(exporter.transform.rotation);
+
           writer.Write((int)rotationMatrix[0, 0]);
           writer.Write((int)rotationMatrix[0, 1]);
           writer.Write((int)rotationMatrix[0, 2]);
@@ -277,35 +307,7 @@ namespace SplashEdit.RuntimeCode
     {
       long position = writer.BaseStream.Position;
       int padding = (int)(4 - (position % 4)) % 4; // Compute needed padding
-      Debug.Log($"aligned {padding} bytes");
       writer.Write(new byte[padding]); // Write zero padding
-    }
-
-    public void LoadData()
-    {
-      _psxData = AssetDatabase.LoadAssetAtPath<PSXData>(_psxDataPath);
-
-      if (!_psxData)
-      {
-        _psxData = ScriptableObject.CreateInstance<PSXData>();
-        AssetDatabase.CreateAsset(_psxData, _psxDataPath);
-        AssetDatabase.SaveAssets();
-        AssetDatabase.Refresh();
-      }
-
-      selectedResolution = _psxData.OutputResolution;
-      dualBuffering = _psxData.DualBuffering;
-      verticalLayout = _psxData.VerticalBuffering;
-      prohibitedAreas = _psxData.ProhibitedAreas;
-    }
-
-    void OnDrawGizmos()
-    {
-      Gizmos.DrawIcon(transform.position, "Packages/net.psxsplash.splashedit/Icons/PSXSceneExporter.png", true);
-      Vector3 sceneOrigin = new Vector3(0, 0, 0);
-      Vector3 cubeSize = new Vector3(8.0f * GTEScaling, 8.0f * GTEScaling, 8.0f * GTEScaling);
-      Gizmos.color = Color.red;
-      Gizmos.DrawWireCube(sceneOrigin, cubeSize);
     }
   }
 }

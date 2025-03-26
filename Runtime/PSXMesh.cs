@@ -45,7 +45,7 @@ namespace SplashEdit.RuntimeCode
         /// <param name="textureHeight">Height of the texture (default is 256).</param>
         /// <param name="transform">Optional transform to convert vertices to world space.</param>
         /// <returns>A new PSXMesh containing the converted triangles.</returns>
-        public static PSXMesh CreateFromUnityMesh(Mesh mesh, float GTEScaling, int textureWidth = 256, int textureHeight = 256, Transform transform = null)
+        public static PSXMesh CreateFromUnityMesh(Mesh mesh, float GTEScaling, Transform transform, bool isStatic, int textureWidth = 256, int textureHeight = 256)
         {
             PSXMesh psxMesh = new PSXMesh { Triangles = new List<Tri>() };
 
@@ -67,10 +67,27 @@ namespace SplashEdit.RuntimeCode
                 int vid1 = indices[i + 1];
                 int vid2 = indices[i + 2];
 
+                Vector3 v0, v1, v2;
+
                 // Transform vertices to world space if a transform is provided.
-                Vector3 v0 = transform ? transform.TransformPoint(vertices[vid0]) : vertices[vid0];
-                Vector3 v1 = transform ? transform.TransformPoint(vertices[vid1]) : vertices[vid1];
-                Vector3 v2 = transform ? transform.TransformPoint(vertices[vid2]) : vertices[vid2];
+
+                if (isStatic)
+                {
+                    v0 = transform.TransformPoint(vertices[vid0]);
+                    v1 = transform.TransformPoint(vertices[vid1]);
+                    v2 = transform.TransformPoint(vertices[vid2]);
+                }
+                else
+                {
+                    // Extract ONLY world scale
+                    Vector3 worldScale = transform.lossyScale;
+
+                    // Apply scale *before* transformation, ensuring rotation isn’t affected
+                    v0 =  Vector3.Scale(vertices[vid0], worldScale);
+                    v1 = Vector3.Scale(vertices[vid1], worldScale);
+                    v2 = Vector3.Scale(vertices[vid2], worldScale);
+
+                }
 
                 // Convert vertices to PSX format including fixed-point conversion and shading.
                 PSXVertex psxV0 = ConvertToPSXVertex(v0, GTEScaling, normals[vid0], uv[vid0], lightDir, lightColor, textureWidth, textureHeight);
@@ -116,13 +133,13 @@ namespace SplashEdit.RuntimeCode
                 nz = (short)PSXTrig.ConvertCoordinateToPSX(normal.z),
 
                 // Map UV coordinates to a byte range after scaling based on texture dimensions.
-                u = (byte)(Mathf.Clamp((uv.x * (textureWidth - 1)), 0, 255)),
-                v = (byte)(Mathf.Clamp(((1.0f - uv.y) * (textureHeight - 1)), 0, 255)),
+                u = (byte)Mathf.Clamp(uv.x * (textureWidth - 1), 0, 255),
+                v = (byte)Mathf.Clamp((1.0f - uv.y) * (textureHeight - 1), 0, 255),
 
                 // Convert the computed color to a byte range.
-                r = (byte)(Mathf.Clamp(shadedColor.r * 255, 0, 255)),
-                g = (byte)(Mathf.Clamp(shadedColor.g * 255, 0, 255)),
-                b = (byte)(Mathf.Clamp(shadedColor.b * 255, 0, 255))
+                r = (byte)Mathf.Clamp(shadedColor.r * 255, 0, 255),
+                g = (byte)Mathf.Clamp(shadedColor.g * 255, 0, 255),
+                b = (byte)Mathf.Clamp(shadedColor.b * 255, 0, 255)
             };
 
             return psxVertex;
