@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -33,7 +34,7 @@ namespace SplashEdit.RuntimeCode
       _exporters = FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
       foreach (PSXObjectExporter exp in _exporters)
       {
-        exp.CreatePSXTexture2D();
+        exp.CreatePSXTextures2D();
         exp.CreatePSXMesh(GTEScaling);
       }
       PackTextures();
@@ -60,34 +61,6 @@ namespace SplashEdit.RuntimeCode
 
     }
 
-    public static string PSXMatrixToStringMultiline(int[,] matrix)
-    {
-      return $@"
-RT11={matrix[0, 0],6} RT12={matrix[0, 1],6} RT13={matrix[0, 2],6}
-RT21={matrix[1, 0],6} RT22={matrix[1, 1],6} RT23={matrix[1, 2],6}
-RT31={matrix[2, 0],6} RT32={matrix[2, 1],6} RT33={matrix[2, 2],6}";
-    }
-
-    public static Vector3 ConvertPSXMatrixToEulerAngles(int[,] psxMatrix)
-    {
-      // Convert PSX fixed-point (s3.12) to float
-      float r00 = psxMatrix[0, 0] / 4096.0f;
-      float r01 = psxMatrix[0, 1] / 4096.0f;
-      float r02 = psxMatrix[0, 2] / 4096.0f;
-      float r10 = psxMatrix[1, 0] / 4096.0f;
-      float r11 = psxMatrix[1, 1] / 4096.0f;
-      float r12 = psxMatrix[1, 2] / 4096.0f;
-      float r20 = psxMatrix[2, 0] / 4096.0f;
-      float r21 = psxMatrix[2, 1] / 4096.0f;
-      float r22 = psxMatrix[2, 2] / 4096.0f;
-
-      // Compute Euler angles (YXZ order for Unity)
-      float thetaX = Mathf.Asin(-r21) * Mathf.Rad2Deg;  // X Rotation
-      float thetaY = Mathf.Atan2(r20, r22) * Mathf.Rad2Deg; // Y Rotation
-      float thetaZ = Mathf.Atan2(r01, r11) * Mathf.Rad2Deg; // Z Rotation
-
-      return new Vector3(thetaX, thetaY, thetaZ);
-    }
     void ExportFile()
     {
 
@@ -102,6 +75,19 @@ RT31={matrix[2, 0],6} RT32={matrix[2, 1],6} RT33={matrix[2, 2],6}";
       List<long> atlasOffsetPlaceholderPositions = new List<long>();
       List<long> atlasDataOffsets = new List<long>();
 
+      int clutCount = 0;
+
+      // Cluts
+      foreach (TextureAtlas atlas in _atlases)
+      {
+        foreach (var texture in atlas.ContainedTextures)
+        {
+          if (texture.ColorPalette != null)
+          {
+            clutCount++;
+          }
+        }
+      }
 
       using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
       {
@@ -111,6 +97,8 @@ RT31={matrix[2, 0],6} RT32={matrix[2, 1],6} RT33={matrix[2, 2],6}";
         writer.Write((ushort)1);
         writer.Write((ushort)_exporters.Length);
         writer.Write((ushort)_atlases.Length);
+        writer.Write((ushort)clutCount);
+        writer.Write((ushort)0);
         // Start of Metadata section
 
         // GameObject section (exporters)
@@ -132,51 +120,12 @@ RT31={matrix[2, 0],6} RT32={matrix[2, 1],6} RT33={matrix[2, 2],6}";
           writer.Write((int)rotationMatrix[2, 1]);
           writer.Write((int)rotationMatrix[2, 2]);
 
-          writer.Write((ushort)exporter.Mesh.Triangles.Count);
-
-          // Set up texture page attributes
-          TPageAttr tpage = new TPageAttr();
-          tpage.SetPageX(exporter.Texture.TexpageX);
-          tpage.SetPageY(exporter.Texture.TexpageY);
-          switch (exporter.Texture.BitDepth)
-          {
-            case PSXBPP.TEX_4BIT:
-              tpage.Set(TPageAttr.ColorMode.Mode4Bit);
-              break;
-            case PSXBPP.TEX_8BIT:
-              tpage.Set(TPageAttr.ColorMode.Mode8Bit);
-              break;
-            case PSXBPP.TEX_16BIT:
-              tpage.Set(TPageAttr.ColorMode.Mode16Bit);
-              break;
-          }
-          tpage.SetDithering(true);
-          writer.Write((ushort)tpage.info);
-          writer.Write((ushort)exporter.Texture.ClutPackingX);
-          writer.Write((ushort)exporter.Texture.ClutPackingY);
-          if (exporter.Texture.BitDepth != PSXBPP.TEX_16BIT)
-          {
-            foreach (VRAMPixel color in exporter.Texture.ColorPalette)
-            {
-              writer.Write((ushort)color.Pack());
-            }
-            for (int i = exporter.Texture.ColorPalette.Count; i < 256; i++)
-            {
-              writer.Write((ushort)0);
-            }
-          }
-          else
-          {
-            for (int i = 0; i < 256; i++)
-            {
-              writer.Write((ushort)0);
-            }
-          }
-
 
           // Write placeholder for mesh data offset and record its position.
           offsetPlaceholderPositions.Add(writer.BaseStream.Position);
           writer.Write((int)0); // 4-byte placeholder for mesh data offset.
+
+          writer.Write((int)exporter.Mesh.Triangles.Count);
         }
 
         // Atlas metadata section
@@ -192,20 +141,45 @@ RT31={matrix[2, 0],6} RT32={matrix[2, 1],6} RT33={matrix[2, 2],6}";
           writer.Write((ushort)atlas.PositionY);
         }
 
+        // Cluts
+        foreach (TextureAtlas atlas in _atlases)
+        {
+          foreach (var texture in atlas.ContainedTextures)
+          {
+            if (texture.ColorPalette != null)
+            {
+              foreach (VRAMPixel clutPixel in texture.ColorPalette)
+              {
+                writer.Write((ushort)clutPixel.Pack());
+              }
+              for (int i = texture.ColorPalette.Count; i < 256; i++)
+              {
+                writer.Write((ushort)0);
+              }
+              writer.Write((ushort)texture.ClutPackingX);
+              writer.Write((ushort)texture.ClutPackingY);
+              writer.Write((ushort)texture.ColorPalette.Count);
+              writer.Write((ushort)0);
+            }
+          }
+        }
+
         // Start of data section
 
         // Mesh data section: Write mesh data for each exporter.
         foreach (PSXObjectExporter exporter in _exporters)
         {
+          AlignToFourBytes(writer);
           // Record the current offset for this exporter's mesh data.
           long meshDataOffset = writer.BaseStream.Position;
           meshDataOffsets.Add(meshDataOffset);
 
           totalFaces += exporter.Mesh.Triangles.Count;
 
-          int expander = 16 / ((int)exporter.Texture.BitDepth);
+
           foreach (Tri tri in exporter.Mesh.Triangles)
           {
+            int expander = 16 / ((int)tri.Texture.BitDepth);
             // Write vertices coordinates
             writer.Write((short)tri.v0.vx);
             writer.Write((short)tri.v0.vy);
@@ -224,18 +198,6 @@ RT31={matrix[2, 0],6} RT32={matrix[2, 1],6} RT33={matrix[2, 2],6}";
             writer.Write((short)tri.v0.ny);
             writer.Write((short)tri.v0.nz);
 
-            // Write UVs for each vertex, adjusting for texture packing
-            writer.Write((byte)(tri.v0.u + exporter.Texture.PackingX * expander));
-            writer.Write((byte)(tri.v0.v + exporter.Texture.PackingY));
-
-            writer.Write((byte)(tri.v1.u + exporter.Texture.PackingX * expander));
-            writer.Write((byte)(tri.v1.v + exporter.Texture.PackingY));
-
-            writer.Write((byte)(tri.v2.u + exporter.Texture.PackingX * expander));
-            writer.Write((byte)(tri.v2.v + exporter.Texture.PackingY));
-
-            writer.Write((ushort)0); // padding
-
             // Write vertex colors with padding
             writer.Write((byte)tri.v0.r);
             writer.Write((byte)tri.v0.g);
@@ -251,6 +213,40 @@ RT31={matrix[2, 0],6} RT32={matrix[2, 1],6} RT33={matrix[2, 2],6}";
             writer.Write((byte)tri.v2.g);
             writer.Write((byte)tri.v2.b);
             writer.Write((byte)0); // padding
+
+            // Write UVs for each vertex, adjusting for texture packing
+            writer.Write((byte)(tri.v0.u + tri.Texture.PackingX * expander));
+            writer.Write((byte)(tri.v0.v + tri.Texture.PackingY));
+
+            writer.Write((byte)(tri.v1.u + tri.Texture.PackingX * expander));
+            writer.Write((byte)(tri.v1.v + tri.Texture.PackingY));
+
+            writer.Write((byte)(tri.v2.u + tri.Texture.PackingX * expander));
+            writer.Write((byte)(tri.v2.v + tri.Texture.PackingY));
+
+            writer.Write((ushort)0); // padding
+
+
+            TPageAttr tpage = new TPageAttr();
+            tpage.SetPageX(tri.Texture.TexpageX);
+            tpage.SetPageY(tri.Texture.TexpageY);
+            switch (tri.Texture.BitDepth)
+            {
+              case PSXBPP.TEX_4BIT:
+                tpage.Set(TPageAttr.ColorMode.Mode4Bit);
+                break;
+              case PSXBPP.TEX_8BIT:
+                tpage.Set(TPageAttr.ColorMode.Mode8Bit);
+                break;
+              case PSXBPP.TEX_16BIT:
+                tpage.Set(TPageAttr.ColorMode.Mode16Bit);
+                break;
+            }
+            tpage.SetDithering(true);
+            writer.Write((ushort)tpage.info);
+            writer.Write((ushort)tri.Texture.ClutPackingX);
+            writer.Write((ushort)tri.Texture.ClutPackingY);
+            writer.Write((ushort)0);
           }
         }
 
@@ -309,5 +305,18 @@ RT31={matrix[2, 0],6} RT32={matrix[2, 1],6} RT33={matrix[2, 2],6}";
       int padding = (int)(4 - (position % 4)) % 4; // Compute needed padding
       writer.Write(new byte[padding]); // Write zero padding
     }
+
+    void OnDrawGizmos()
+
+    {
+
+      Gizmos.DrawIcon(transform.position, "Packages/net.psxsplash.splashedit/Icons/PSXSceneExporter.png", true);
+      Vector3 sceneOrigin = new Vector3(0, 0, 0);
+      Vector3 cubeSize = new Vector3(8.0f * GTEScaling, 8.0f * GTEScaling, 8.0f * GTEScaling);
+      Gizmos.color = Color.red;
+      Gizmos.DrawWireCube(sceneOrigin, cubeSize);
+
+    }
+
   }
 }

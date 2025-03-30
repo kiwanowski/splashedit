@@ -59,17 +59,31 @@ namespace SplashEdit.RuntimeCode
 
         /// <summary>
         /// Packs the textures from the provided PSXObjectExporter array into VRAM.
+        /// Each exporter now holds a list of textures.
+        /// Duplicates (textures with the same underlying OriginalTexture and BitDepth) across all exporters are merged.
         /// Returns the processed objects and the final VRAM pixel array.
         /// </summary>
         /// <param name="objects">Array of PSXObjectExporter objects to process.</param>
-        /// <returns>Tuple containing processed objects and the VRAM pixel array.</returns>
-        public (PSXObjectExporter[] processedObjects, TextureAtlas[] atlases, VRAMPixel[,] _vramPixels) PackTexturesIntoVRAM(PSXObjectExporter[] objects)
+        /// <returns>Tuple containing processed objects, texture atlases, and the VRAM pixel array.</returns>
+        public (PSXObjectExporter[] processedObjects, TextureAtlas[] atlases, VRAMPixel[,] vramPixels) PackTexturesIntoVRAM(PSXObjectExporter[] objects)
         {
-            List<PSXTexture2D> uniqueTextures = new List<PSXTexture2D>();
-            // Group objects by texture bit depth (high to low).
-            var groupedObjects = objects.GroupBy(obj => obj.Texture.BitDepth).OrderByDescending(g => g.Key);
+            // Gather all textures from all exporters.
+            List<PSXTexture2D> allTextures = new List<PSXTexture2D>();
+            foreach (var obj in objects)
+            {
+                allTextures.AddRange(obj.Textures);
+            }
 
-            foreach (var group in groupedObjects)
+            // List to track unique textures.
+            List<PSXTexture2D> uniqueTextures = new List<PSXTexture2D>();
+
+            // Group textures by bit depth (highest first).
+            var texturesByBitDepth = allTextures
+                .GroupBy(tex => tex.BitDepth)
+                .OrderByDescending(g => g.Key);
+
+            // Process each group.
+            foreach (var group in texturesByBitDepth)
             {
                 // Determine atlas width based on texture bit depth.
                 int atlasWidth = group.Key switch
@@ -80,33 +94,48 @@ namespace SplashEdit.RuntimeCode
                     _               => 256
                 };
 
-                // Create a new atlas for this group.
+                // Create an initial atlas for this group.
                 TextureAtlas atlas = new TextureAtlas { BitDepth = group.Key, Width = atlasWidth, PositionX = 0, PositionY = 0 };
                 _textureAtlases.Add(atlas);
 
-                // Process each texture in descending order of area (width * height).
-                foreach (var obj in group.OrderByDescending(obj => obj.Texture.QuantizedWidth * obj.Texture.Height))
+                // Process each texture in descending order of area.
+                foreach (var texture in group.OrderByDescending(tex => tex.QuantizedWidth * tex.Height))
                 {
-                    // Remove duplicate textures
-                    /*if (uniqueTextures.Any(tex => tex.OriginalTexture.GetInstanceID() == obj.Texture.OriginalTexture.GetInstanceID() && tex.BitDepth == obj.Texture.BitDepth))
+                    // Check for duplicates in the entire set.
+                    if (uniqueTextures.Any(tex => tex.OriginalTexture.GetInstanceID() == texture.OriginalTexture.GetInstanceID() &&
+                                                  tex.BitDepth == texture.BitDepth))
                     {
-                        obj.Texture = uniqueTextures.First(tex => tex.OriginalTexture.GetInstanceID() == obj.Texture.OriginalTexture.GetInstanceID());
+                        // Skip packing this texture – it will be replaced later.
                         continue;
-                    }*/
+                    }
 
                     // Try to place the texture in the current atlas.
-                    if (!TryPlaceTextureInAtlas(atlas, obj.Texture))
+                    if (!TryPlaceTextureInAtlas(atlas, texture))
                     {
-                        // If failed, create a new atlas and try again.
+                        // If failed, create a new atlas for this bit depth group and try again.
                         atlas = new TextureAtlas { BitDepth = group.Key, Width = atlasWidth, PositionX = 0, PositionY = 0 };
                         _textureAtlases.Add(atlas);
-                        if (!TryPlaceTextureInAtlas(atlas, obj.Texture))
+                        if (!TryPlaceTextureInAtlas(atlas, texture))
                         {
-                            Debug.LogError($"Failed to pack texture {obj.Texture}. It might not fit.");
-                            break;
+                            Debug.LogError($"Failed to pack texture {texture}. It might not fit.");
+                            continue;
                         }
                     }
-                    uniqueTextures.Add(obj.Texture);
+                    uniqueTextures.Add(texture);
+                }
+            }
+
+            // Now update every exporter so that duplicate textures reference the unique instance.
+            foreach (var obj in objects)
+            {
+                for (int i = 0; i < obj.Textures.Count; i++)
+                {
+                    var unique = uniqueTextures.FirstOrDefault(tex => tex.OriginalTexture.GetInstanceID() == obj.Textures[i].OriginalTexture.GetInstanceID() &&
+                                                                      tex.BitDepth == obj.Textures[i].BitDepth);
+                    if (unique != null)
+                    {
+                        obj.Textures[i] = unique;
+                    }
                 }
             }
 
@@ -114,7 +143,6 @@ namespace SplashEdit.RuntimeCode
             ArrangeAtlasesInVRAM();
             // Allocate color lookup tables (CLUTs) for textures that use palettes.
             AllocateCLUTs();
-
             // Build the final VRAM pixel array from placed textures and CLUTs.
             BuildVram();
             return (objects, _finalizedAtlases.ToArray(), _vramPixels);
@@ -227,7 +255,7 @@ namespace SplashEdit.RuntimeCode
                         if (IsPlacementValid(candidate))
                         {
                             _allocatedCLUTs.Add(candidate);
-                            texture.ClutPackingX = (ushort)(x/16);
+                            texture.ClutPackingX = (ushort)(x / 16);
                             texture.ClutPackingY = y;
                             placed = true;
                             break;
@@ -254,7 +282,6 @@ namespace SplashEdit.RuntimeCode
 
                 foreach (PSXTexture2D texture in atlas.ContainedTextures)
                 {
-                    
                     // Copy texture image data into VRAM using atlas and texture packing offsets.
                     for (int y = 0; y < texture.Height; y++)
                     {
@@ -298,6 +325,5 @@ namespace SplashEdit.RuntimeCode
 
             return !(overlapsAtlas || overlapsReserved || overlapsCLUT);
         }
-
     }
 }

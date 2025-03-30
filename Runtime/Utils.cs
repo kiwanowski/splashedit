@@ -100,18 +100,34 @@ namespace SplashEdit.RuntimeCode
         /// <returns>A 3x3 matrix representing the PSX-compatible rotation.</returns>
         public static int[,] ConvertRotationToPSXMatrix(Quaternion rotation)
         {
-            // Convert the quaternion to a Unity rotation matrix.
-            Matrix4x4 unityMatrix = Matrix4x4.Rotate(rotation);
+            // Standard quaternion-to-matrix conversion.
+            float x = rotation.x, y = rotation.y, z = rotation.z, w = rotation.w;
 
-            // Flip the Y-axis to match PSX's Y-down convention.
+            float m00 = 1f - 2f * (y * y + z * z);
+            float m01 = 2f * (x * y - z * w);
+            float m02 = 2f * (x * z + y * w);
+
+            float m10 = 2f * (x * y + z * w);
+            float m11 = 1f - 2f * (x * x + z * z);
+            float m12 = 2f * (y * z - x * w);
+
+            float m20 = 2f * (x * z - y * w);
+            float m21 = 2f * (y * z + x * w);
+            float m22 = 1f - 2f * (x * x + y * y);
+
+            // Apply Y-axis flip to match the PSX's Y-down convention.
+            // This replicates the behavior of:
+            // { m00, -m01, m02 },
+            // { -m10, m11, -m12 },
+            // { m20, -m21, m22 }
             float[,] fixedMatrix = new float[3, 3]
             {
-            {  unityMatrix.m00, -unityMatrix.m01,  unityMatrix.m02 }, // Flip Y
-            { -unityMatrix.m10,  unityMatrix.m11, -unityMatrix.m12 }, // Flip Y
-            {  unityMatrix.m20, -unityMatrix.m21,  unityMatrix.m22 }  // Flip Y
+        { m00, -m01, m02 },
+        { -m10, m11, -m12 },
+        { m20, -m21, m22 }
             };
 
-            // Convert the Unity matrix to PSX fixed-point format.
+            // Convert to PSX fixed-point format.
             int[,] psxMatrix = new int[3, 3];
             for (int i = 0; i < 3; i++)
             {

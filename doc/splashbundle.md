@@ -1,87 +1,93 @@
 # SPLASHPACK Binary File Format Specification
 
-This specification describes the binary file layout for the SP exporter. All numeric values are stored in little‐endian format. All offsets are counted from the beginning of the file.
+All numeric values are stored in little‐endian format. All offsets are counted from the beginning of the file.
 
 ---
 
-## 1. File Header
+## 1. File Header (12 bytes)
 
-| Offset  | Size | Type   | Description                                                     |
-| ------- | ---- | ------ | --------------------------------------------------------------- |
-| 0x00    | 1    | char   | `'S'` – File identifier                                         |
-| 0x01    | 1    | char   | `'P'` – File identifier                                         |
-| 0x02    | 2    | uint16 | Version number (currently **1**)                                |
-| 0x04    | 2    | uint16 | Number of GameObject (exporter) descriptors                     |
-| 0x06    | 2    | uint16 | Number of Texture Atlas descriptors                             |
+| Offset | Size | Type   | Description                         |
+| ------ | ---- | ------ | ----------------------------------- |
+| 0x00   | 2    | char   | `'SP'` – File magic                 |
+| 0x02   | 2    | uint16 | Version number (currently **1**)    |
+| 0x04   | 2    | uint16 | Number of Exporter descriptors      |
+| 0x06   | 2    | uint16 | Number of Texture Atlas descriptors |
+| 0x08   | 2    | uint16 | Number of CLUT descriptors          |
+| 0x0A   | 2    | uint16 | Reserved (always 0)                 |
 
 ---
 
 ## 2. Metadata Section
 
-The metadata section is split into two parts: **Object Descriptors** and **Atlas Descriptors**.
+The metadata section comprises three groups of descriptors.
 
-### 2.1 Object (Exporter) Descriptors
+### 2.1 Exporter Descriptors (56 bytes each)
 
-| Offset (per entry) | Size     | Type    | Description                                                          |
-| ------------------ | -------- | ------- | -------------------------------------------------------------------- |
-| 0x00               | 4        | int     | X coordinate (GTE-converted)                                         |
-| 0x04               | 4        | int     | Y coordinate (GTE-converted)                                         |
-| 0x08               | 4        | int     | Z coordinate (GTE-converted)                                         |
-| 0x0C               | 36       | int[9]  | Rotation matrix (3×3, row-major order)                               |
-| 0x30               | 2        | uint16  | Number of triangles in the mesh                                      |
-| 0x32               | 2        | uint16  | Texture page attributes (encoded from page X/Y, bit depth, dithering)  |
-| 0x34               | 2        | uint16  | CLUT packing X coordinate                                           |
-| 0x36               | 2        | uint16  | CLUT packing Y coordinate                                           |
-| 0x38               | 512      | uint16[256] | Color palette (filled with zeros if 16-bit textures)                   |
-| 0x438              | 4        | int     | Mesh data offset placeholder                                        |
+Each exporter descriptor stores the transform and mesh metadata for one GameObject.
 
-*Each object descriptor occupies **0x38** bytes.*
+| Offset (per entry) | Size | Type   | Description                       |
+| ------------------ | ---- | ------ | --------------------------------- |
+| 0x00               | 4    | int    | X coordinate (Fixed-point)        |
+| 0x04               | 4    | int    | Y coordinate (Fixed-point)        |
+| 0x08               | 4    | int    | Z coordinate (Fixed-point)        |
+| 0x0C               | 36   | int[9] | 3×3 Rotation matrix (Fixed-point) |
+| 0x30               | 4    | int    | **Mesh Data Offset Placeholder**  |
+| 0x34               | 4    | int    | Triangle count in the mesh        |
 
----
+### 2.2 Texture Atlas Descriptors (12 bytes each)
 
-### 2.2 Texture Atlas Descriptors
+Each texture atlas descriptor holds atlas layout data and a placeholder for the atlas raw data offset.
 
-For each texture atlas, the following fields are stored sequentially:
+| Offset (per entry) | Size | Type   | Description                                              |
+| ------------------ | ---- | ------ | -------------------------------------------------------- |
+| 0x00               | 4    | int    | **Atlas Data Offset Placeholder**                        |
+| 0x04               | 2    | uint16 | Atlas width                                              |
+| 0x06               | 2    | uint16 | Atlas height (currently always 256, for future-proofing) |
+| 0x08               | 2    | uint16 | Atlas position X – relative to VRAM origin               |
+| 0x0A               | 2    | uint16 | Atlas position Y – relative to VRAM origin               |
 
-| Offset (per entry) | Size | Type   | Description                                                    |
-| ------------------ | ---- | ------ | -------------------------------------------------------------- |
-| 0x00               | 4    | int    | Atlas raw data offset placeholder                              |
-| 0x04               | 2    | uint16 | Atlas width                                                    |
-| 0x06               | 2    | uint16 | Atlas height (always 256, but defined for future-proofing)     |
-| 0x08               | 2    | uint16 | Atlas position X – relative to VRAM origin                     |
-| 0x0A               | 2    | uint16 | Atlas position Y – relative to VRAM origin                     |
+### 2.3 CLUT Descriptors (520 bytes each)
 
-*Each atlas descriptor occupies **0x0C** bytes.*
+CLUTs are the only data which is stored in the Metadata section.
+For each CLUT (Color Lookup Table) associated with an atlas texture that has a palette:
+
+| Offset (per entry) | Size | Type        | Description                                                                       |
+| ------------------ | ---- | ----------- | --------------------------------------------------------------------------------- |
+| 0x00               | 512  | uint16[256] | Color palette entries (each entry is 2 bytes 16bpp). If unused, entries are zero. |
+| 0x200              | 2    | uint16      | CLUT packing X coordinate - already in 16 pixel steps                             |
+| 0x202              | 2    | uint16      | CLUT packing Y coordinate                                                         |
+| 0x204              | 2    | uint16      | Palette count (number of valid palette entries)                                   |
+| 0x206              | 2    | uint16      | Reserved (always 0)                                                               |
 
 ---
 
 ## 3. Data Section
 
-The data section is composed of two distinct blocks: **Mesh Data Blocks** and **Atlas Data Blocks**.
+The data section contains the actual mesh and atlas raw data.
 
 ### 3.1 Mesh Data Blocks
 
-For each exporter, a mesh data block is written. The starting offset of each block (stored in its corresponding object descriptor) is counted from the beginning of the file. Within each mesh data block, data for every triangle is stored sequentially using the following layout:
+For each exporter, a mesh data block is written at the offset specified in its descriptor. Each mesh block contains data for all triangles of the associated mesh.
 
-| Field                         | Size per element        | Type     | Description                                                                              |
-| ----------------------------- | ----------------------- | -------- | ---------------------------------------------------------------------------------------- |
-| **Vertex Coordinates**        | 3 × 2 bytes per vertex  | int16    | For each vertex (v0, v1, v2): X, Y, Z coordinates                                          |
-| **Vertex Normal**             | 3 × 2 bytes             | int16    | For vertex v0 only: Normal vector components (nx, ny, nz)                                |
-| **Texture Coordinates (UVs)** | 1 + 1 bytes per vertex  | uint8    | For each vertex (v0, v1, v2): U and V coordinates (adjusted by texture packing factors)    |
-| **UV Padding**                | 2 bytes                 | uint16   | Padding (set to zero)                                                                    |
-| **Vertex Colors**             | 3 + 1 bytes per vertex  | uint8    | For each vertex (v0, v1, v2): Color channels (red, green, blue) and 1 byte of padding      |
+#### **Triangle Data Layout (per triangle – 52 bytes total):**
 
-*The overall size per triangle is calculated based on the fixed sizes above multiplied by the number of vertices and triangles.*
+| Field                         | Size                                                     | Description                                                                                                                                                                                                      |
+| ----------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Vertex Coordinates**        | 3 vertices × 3 × 2 bytes = 18 bytes                      | For each vertex (v0, v1, v2): X, Y, Z coordinates (int16)                                                                                                                                                        |
+| **Vertex Normal**             | 3 × 2 bytes = 6 bytes                                    | Normal vector for vertex v0 (int16: nx, ny, nz)                                                                                                                                                                  |
+| **Vertex Colors**             | 3 vertices × (3 bytes color + 1 byte padding) = 12 bytes | For each vertex (v0, v1, v2): Red, Green, Blue (uint8) plus 1 byte padding                                                                                                                                       |
+| **Texture Coordinates (UVs)** | 3 vertices × 2 bytes = 6 bytes                           | For each vertex (v0, v1, v2): U and V coordinates (uint8), adjusted by texture packing factors                                                                                                                   |
+| **UV Padding**                | 2 bytes                                                  | Padding (uint16, set to zero)                                                                                                                                                                                    |
+| **Texture Attributes**        | 2 + 2 + 2 + 2 = 8 bytes                                  | Contains: <br> • Texture page attributes (uint16 – encoded from page X/Y, bit depth, dithering)<br> • Texture CLUT packing X (uint16)<br> • Texture CLUT packing Y (uint16)<br> • Reserved (uint16, set to zero) |
 
----
+*Triangles are written sequentially. Prior to writing each mesh data block, the file pointer is aligned to a 4-byte boundary.*
 
 ### 3.2 Atlas Data Blocks
 
-For each texture atlas, the raw texture data is stored as a 2D array. Before writing each atlas data block, the file pointer is aligned to a 4-byte boundary. The starting offset of each atlas block (stored in its corresponding atlas descriptor) is counted from the beginning of the file.
+For each atlas, a raw texture data block is written at the offset specified in its descriptor. Before writing, the file pointer is aligned to a 4-byte boundary.
 
-| Field         | Description                                                                                         |
-| ------------- | --------------------------------------------------------------------------------------------------- |
-| **Raw Texture Data** | The atlas data is written pixel by pixel.
+- **Raw Texture Data:**  
+  The atlas data is written pixel by pixel as returned by the pixel packing function. The total size equals  
+  *(Atlas Width × Atlas Height)* The data is prepared for a DMA transfer to the VRAM.
 
 ---
-

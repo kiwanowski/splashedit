@@ -116,7 +116,7 @@ namespace SplashEdit.EditorCode
             PSXObjectExporter[] objects = FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
             foreach (PSXObjectExporter exp in objects)
             {
-                exp.CreatePSXTexture2D();
+                exp.CreatePSXTextures2D();
             }
 
             // Define framebuffer regions based on selected resolution and layout.
@@ -139,7 +139,7 @@ namespace SplashEdit.EditorCode
             {
                 for (int x = 0; x < VramWidth; x++)
                 {
-                    vramImage.SetPixel(x, VramHeight - y - 1, packed._vramPixels[x, y].GetUnityColor());
+                    vramImage.SetPixel(x, VramHeight - y - 1, packed.vramPixels[x, y].GetUnityColor());
                 }
             }
             vramImage.Apply();
@@ -155,7 +155,7 @@ namespace SplashEdit.EditorCode
                     {
                         for (int x = 0; x < VramWidth; x++)
                         {
-                            writer.Write(packed._vramPixels[x, y].Pack());
+                            writer.Write(packed.vramPixels[x, y].Pack());
                         }
                     }
                 }
