@@ -12,8 +12,9 @@ namespace SplashEdit.EditorCode
 {
     public class VRAMEditorWindow : EditorWindow
     {
-        private const int VramWidth = 1024;
-        private const int VramHeight = 512;
+        private int VramWidth => VRAMPacker.VramWidth;
+        private int VramHeight => VRAMPacker.VramHeight;
+
         private static readonly Vector2 MinSize = new Vector2(800, 600);
         private List<ProhibitedArea> prohibitedAreas = new List<ProhibitedArea>();
         private Vector2 scrollPosition;

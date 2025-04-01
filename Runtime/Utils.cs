@@ -330,6 +330,9 @@ namespace SplashEdit.RuntimeCode
                 _ => throw new System.NotImplementedException(),
             };
         }
+
+
+        public static byte Clamp0255(float v) => (byte)(Mathf.Clamp(v, 0, 255));
     }
 }
 

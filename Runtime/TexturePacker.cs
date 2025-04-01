@@ -30,8 +30,8 @@ namespace SplashEdit.RuntimeCode
         private List<TextureAtlas> _finalizedAtlases = new List<TextureAtlas>(); // Atlases that have been successfully placed.
         private List<Rect> _allocatedCLUTs = new List<Rect>();                     // Allocated regions for CLUTs.
 
-        private const int VRAM_WIDTH = 1024;
-        private const int VRAM_HEIGHT = 512;
+        public static readonly int VramWidth = 1024;
+        public static readonly int VramHeight = 512;
 
         private VRAMPixel[,] _vramPixels;              // Simulated VRAM pixel data.
 
@@ -54,7 +54,7 @@ namespace SplashEdit.RuntimeCode
             _reservedAreas.Add(framebuffers[0]);
             _reservedAreas.Add(framebuffers[1]);
 
-            _vramPixels = new VRAMPixel[VRAM_WIDTH, VRAM_HEIGHT];
+            _vramPixels = new VRAMPixel[VramWidth, VramHeight];
         }
 
         /// <summary>
@@ -189,10 +189,10 @@ namespace SplashEdit.RuntimeCode
                 {
                     bool placed = false;
                     // Try every possible row (stepping by atlas height).
-                    for (int y = 0; y <= VRAM_HEIGHT - TextureAtlas.Height; y += 256)
+                    for (int y = 0; y <= VramHeight - TextureAtlas.Height; y += 256)
                     {
                         // Try every possible column (stepping by 64 pixels).
-                        for (int x = 0; x <= VRAM_WIDTH - atlas.Width; x += 64)
+                        for (int x = 0; x <= VramWidth - atlas.Width; x += 64)
                         {
                             // Only consider atlases that haven't been placed yet.
                             if (atlas.PositionX == 0 && atlas.PositionY == 0)
@@ -246,9 +246,9 @@ namespace SplashEdit.RuntimeCode
                 bool placed = false;
 
                 // Iterate over possible CLUT positions in VRAM.
-                for (ushort x = 0; x < VRAM_WIDTH; x += 16)
+                for (ushort x = 0; x < VramWidth; x += 16)
                 {
-                    for (ushort y = 0; y <= VRAM_HEIGHT; y++)
+                    for (ushort y = 0; y <= VramHeight; y++)
                     {
                         var candidate = new Rect(x, y, clutWidth, clutHeight);
                         if (IsPlacementValid(candidate))
@@ -312,8 +312,8 @@ namespace SplashEdit.RuntimeCode
         private bool IsPlacementValid(Rect rect)
         {
             // Ensure the rectangle fits within VRAM boundaries.
-            if (rect.x + rect.width > VRAM_WIDTH) return false;
-            if (rect.y + rect.height > VRAM_HEIGHT) return false;
+            if (rect.x + rect.width > VramWidth) return false;
+            if (rect.y + rect.height > VramHeight) return false;
 
             // Check for overlaps with existing atlases.
             bool overlapsAtlas = _finalizedAtlases.Any(a => new Rect(a.PositionX, a.PositionY, a.Width, TextureAtlas.Height).Overlaps(rect));

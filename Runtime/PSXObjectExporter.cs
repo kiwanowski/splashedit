@@ -12,8 +12,8 @@ namespace SplashEdit.RuntimeCode
         public PSXMesh Mesh { get; set; } // Stores the converted PlayStation-style mesh
 
 
-        public bool PreviewNormals = false;
-        public float normalPreviewLength = 0.5f; // Length of the normal lines
+        [SerializeField] private bool PreviewNormals = false;
+        [SerializeField] private float normalPreviewLength = 0.5f; // Length of the normal lines
 
         private void OnDrawGizmos()
         {
@@ -51,6 +51,7 @@ namespace SplashEdit.RuntimeCode
         public void CreatePSXTextures2D()
         {
             Renderer renderer = GetComponent<Renderer>();
+            Textures.Clear();
             if (renderer != null)
             {
                 Material[] materials = renderer.sharedMaterials;
