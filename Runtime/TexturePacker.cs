@@ -89,9 +89,9 @@ namespace SplashEdit.RuntimeCode
                 int atlasWidth = group.Key switch
                 {
                     PSXBPP.TEX_16BIT => 256,
-                    PSXBPP.TEX_8BIT  => 128,
-                    PSXBPP.TEX_4BIT  => 64,
-                    _               => 256
+                    PSXBPP.TEX_8BIT => 128,
+                    PSXBPP.TEX_4BIT => 64,
+                    _ => 256
                 };
 
                 // Create an initial atlas for this group.
@@ -101,9 +101,8 @@ namespace SplashEdit.RuntimeCode
                 // Process each texture in descending order of area.
                 foreach (var texture in group.OrderByDescending(tex => tex.QuantizedWidth * tex.Height))
                 {
-                    // Check for duplicates in the entire set.
-                    if (uniqueTextures.Any(tex => tex.OriginalTexture.GetInstanceID() == texture.OriginalTexture.GetInstanceID() &&
-                                                  tex.BitDepth == texture.BitDepth))
+                    // Remove duplicate textures
+                    if (uniqueTextures.Where(tex => tex.OriginalTexture != null).Any(tex => tex.OriginalTexture.GetInstanceID() == obj.Texture.OriginalTexture.GetInstanceID() && tex.BitDepth == obj.Texture.BitDepth))
                     {
                         // Skip packing this texture – it will be replaced later.
                         continue;

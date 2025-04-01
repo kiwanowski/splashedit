@@ -41,18 +41,15 @@ namespace SplashEdit.RuntimeCode
       ExportFile();
     }
 
-    void PackTextures()
-    {
+        private PSXData _psxData;
+        private readonly string _psxDataPath = "Assets/PSXData.asset";
 
-      Rect buffer1 = new Rect(0, 0, selectedResolution.x, selectedResolution.y);
-      Rect buffer2 = verticalLayout ? new Rect(0, 256, selectedResolution.x, selectedResolution.y)
-                                    : new Rect(selectedResolution.x, 0, selectedResolution.x, selectedResolution.y);
+        private Vector2 selectedResolution;
+        private bool dualBuffering;
+        private bool verticalLayout;
+        private List<ProhibitedArea> prohibitedAreas;
+        private VRAMPixel[,] vramPixels;
 
-      List<Rect> framebuffers = new List<Rect> { buffer1 };
-      if (dualBuffering)
-      {
-        framebuffers.Add(buffer2);
-      }
 
       VRAMPacker tp = new VRAMPacker(framebuffers, prohibitedAreas);
       var packed = tp.PackTexturesIntoVRAM(_exporters);

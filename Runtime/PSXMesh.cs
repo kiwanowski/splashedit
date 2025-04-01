@@ -195,6 +195,8 @@ namespace SplashEdit.RuntimeCode
         {
 
 
+            static short clampPosition(float v) => (short)(Mathf.Clamp(v, -4f, 3.999f) * 4096);
+            static byte clamp0255(float v) => (byte)(Mathf.Clamp(v, 0, 255));
             PSXVertex psxVertex = new PSXVertex
             {
                 // Convert position to fixed-point, clamping values to a defined range.
@@ -212,7 +214,6 @@ namespace SplashEdit.RuntimeCode
                 v = (byte)Mathf.Clamp((1.0f - uv.y) * (textureHeight - 1), 0, 255),
 
                 // Convert the computed color to a byte range.
-
             };
 
             return psxVertex;
