@@ -102,7 +102,7 @@ namespace SplashEdit.RuntimeCode
                 foreach (var texture in group.OrderByDescending(tex => tex.QuantizedWidth * tex.Height))
                 {
                     // Remove duplicate textures
-                    if (uniqueTextures.Where(tex => tex.OriginalTexture != null).Any(tex => tex.OriginalTexture.GetInstanceID() == obj.Texture.OriginalTexture.GetInstanceID() && tex.BitDepth == obj.Texture.BitDepth))
+                    if (uniqueTextures.Any(tex => tex.OriginalTexture.GetInstanceID() == texture.OriginalTexture.GetInstanceID() && tex.BitDepth == texture.BitDepth))
                     {
                         // Skip packing this texture – it will be replaced later.
                         continue;

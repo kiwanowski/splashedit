@@ -30,6 +30,7 @@ namespace SplashEdit.RuntimeCode
         public PSXVertex v2;
 
         public PSXTexture2D Texture;
+        public readonly PSXVertex[] Vertexes => new PSXVertex[] { v0, v1, v2 };
     }
 
     /// <summary>

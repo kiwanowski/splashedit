@@ -10,6 +10,26 @@ namespace SplashEdit.RuntimeCode
     public static class DataStorage
     {
         private static readonly string psxDataPath = "Assets/PSXData.asset";
+
+        /// <summary>
+        /// Loads stored PSX data from the asset.
+        /// </summary>
+        public static PSXData LoadData(out Vector2 selectedResolution, out bool dualBuffering, out bool verticalLayout, out List<ProhibitedArea> prohibitedAreas)
+        {
+            var _psxData = AssetDatabase.LoadAssetAtPath<PSXData>(psxDataPath);
+            if (!_psxData)
+            {
+                _psxData = ScriptableObject.CreateInstance<PSXData>();
+                AssetDatabase.CreateAsset(_psxData, psxDataPath);
+                AssetDatabase.SaveAssets();
+            }
+
+            selectedResolution = _psxData.OutputResolution;
+            dualBuffering = _psxData.DualBuffering;
+            verticalLayout = _psxData.VerticalBuffering;
+            prohibitedAreas = _psxData.ProhibitedAreas;
+            return _psxData;
+        }
         public static PSXData LoadData()
         {
             PSXData psxData = AssetDatabase.LoadAssetAtPath<PSXData>(psxDataPath);
@@ -288,8 +308,6 @@ namespace SplashEdit.RuntimeCode
 
     public static class Utils
     {
-        private static string _psxDataPath = "Assets/PSXData.asset";
-
         public static (Rect, Rect) BufferForResolution(Vector2 selectedResolution, bool verticalLayout, Vector2 offset = default)
         {
             if (offset == default)
@@ -302,24 +320,15 @@ namespace SplashEdit.RuntimeCode
             return (buffer1, buffer2);
         }
 
-        /// <summary>
-        /// Loads stored PSX data from the asset.
-        /// </summary>
-        public static PSXData LoadData(out Vector2 selectedResolution, out bool dualBuffering, out bool verticalLayout, out List<ProhibitedArea> prohibitedAreas)
+        public static TPageAttr.ColorMode ToColorMode(this PSXBPP depth)
         {
-            var _psxData = AssetDatabase.LoadAssetAtPath<PSXData>(_psxDataPath);
-            if (!_psxData)
+            return depth switch
             {
-                _psxData = ScriptableObject.CreateInstance<PSXData>();
-                AssetDatabase.CreateAsset(_psxData, _psxDataPath);
-                AssetDatabase.SaveAssets();
-            }
-
-            selectedResolution = _psxData.OutputResolution;
-            dualBuffering = _psxData.DualBuffering;
-            verticalLayout = _psxData.VerticalBuffering;
-            prohibitedAreas = _psxData.ProhibitedAreas;
-            return _psxData;
+                PSXBPP.TEX_4BIT => TPageAttr.ColorMode.Mode4Bit,
+                PSXBPP.TEX_8BIT => TPageAttr.ColorMode.Mode8Bit,
+                PSXBPP.TEX_16BIT => TPageAttr.ColorMode.Mode16Bit,
+                _ => throw new System.NotImplementedException(),
+            };
         }
     }
 }

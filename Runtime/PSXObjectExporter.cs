@@ -3,7 +3,6 @@ using UnityEngine;
 
 namespace SplashEdit.RuntimeCode
 {
-    [RequireComponent(typeof(MeshFilter))]
     [RequireComponent(typeof(Renderer))]
     public class PSXObjectExporter : MonoBehaviour
     {
@@ -55,7 +54,6 @@ namespace SplashEdit.RuntimeCode
             if (renderer != null)
             {
                 Material[] materials = renderer.sharedMaterials;
-                Textures = new List<PSXTexture2D>(); // Ensure the list is initialized
 
                 foreach (Material mat in materials)
                 {
@@ -84,17 +82,6 @@ namespace SplashEdit.RuntimeCode
                     }
                 }
             }
-            else
-            {
-                //TODO: Better handle object with default texture
-                Texture = new PSXTexture2D()
-                {
-                    BitDepth = BitDepth,
-                    Width = 0,
-                    Height = 0,
-                };
-                Texture.OriginalTexture = null;
-            }
         }
 
         private Texture2D ConvertToTexture2D(Texture texture)
@@ -122,11 +109,6 @@ namespace SplashEdit.RuntimeCode
             if (renderer != null)
             {
                 Mesh = PSXMesh.CreateFromUnityRenderer(renderer, GTEScaling, transform, Textures);
-            }
-            else
-            {
-                // Dynamic meshes do not consider object transformation
-                Mesh = PSXMesh.CreateFromUnityMesh(meshFilter.sharedMesh, Texture.Width, Texture.Height);
             }
         }
     }

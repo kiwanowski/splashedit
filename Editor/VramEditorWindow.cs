@@ -56,7 +56,7 @@ namespace SplashEdit.EditorCode
             // Ensure minimum window size is applied.
             this.minSize = MinSize;
 
-            _psxData = Utils.LoadData(out selectedResolution, out dualBuffering, out verticalLayout, out prohibitedAreas);
+            _psxData = DataStorage.LoadData(out selectedResolution, out dualBuffering, out verticalLayout, out prohibitedAreas);
         }
 
         /// <summary>
@@ -266,7 +266,10 @@ namespace SplashEdit.EditorCode
 
             // Display VRAM image preview.
             Rect vramRect = GUILayoutUtility.GetRect(VramWidth, VramHeight, GUILayout.ExpandWidth(false));
-            EditorGUI.DrawPreviewTexture(vramRect, vramImage, null, ScaleMode.ScaleToFit, 0, 0, ColorWriteMask.All);
+            if (vramImage)
+            {
+                EditorGUI.DrawPreviewTexture(vramRect, vramImage, null, ScaleMode.ScaleToFit, 0, 0, ColorWriteMask.All);
+            }
 
             // Draw framebuffer overlays.
             (Rect buffer1, Rect buffer2) = Utils.BufferForResolution(selectedResolution, verticalLayout, vramRect.min);
