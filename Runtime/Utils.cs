@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 using UnityEditor;
+using System.Collections.Generic;
+using UnityEditor;
 using UnityEngine;
 
 namespace SplashEdit.RuntimeCode
@@ -8,6 +10,26 @@ namespace SplashEdit.RuntimeCode
     public static class DataStorage
     {
         private static readonly string psxDataPath = "Assets/PSXData.asset";
+
+        /// <summary>
+        /// Loads stored PSX data from the asset.
+        /// </summary>
+        public static PSXData LoadData(out Vector2 selectedResolution, out bool dualBuffering, out bool verticalLayout, out List<ProhibitedArea> prohibitedAreas)
+        {
+            var _psxData = AssetDatabase.LoadAssetAtPath<PSXData>(psxDataPath);
+            if (!_psxData)
+            {
+                _psxData = ScriptableObject.CreateInstance<PSXData>();
+                AssetDatabase.CreateAsset(_psxData, psxDataPath);
+                AssetDatabase.SaveAssets();
+            }
+
+            selectedResolution = _psxData.OutputResolution;
+            dualBuffering = _psxData.DualBuffering;
+            verticalLayout = _psxData.VerticalBuffering;
+            prohibitedAreas = _psxData.ProhibitedAreas;
+            return _psxData;
+        }
         public static PSXData LoadData()
         {
             PSXData psxData = AssetDatabase.LoadAssetAtPath<PSXData>(psxDataPath);
@@ -281,6 +303,36 @@ namespace SplashEdit.RuntimeCode
             Mode8Bit = 1,
             Mode16Bit = 2
         }
+    }
+
+
+    public static class Utils
+    {
+        public static (Rect, Rect) BufferForResolution(Vector2 selectedResolution, bool verticalLayout, Vector2 offset = default)
+        {
+            if (offset == default)
+            {
+                offset = Vector2.zero;
+            }
+            Rect buffer1 = new Rect(offset.x, offset.y, selectedResolution.x, selectedResolution.y);
+            Rect buffer2 = verticalLayout ? new Rect(offset.x, 256, selectedResolution.x, selectedResolution.y)
+                                          : new Rect(offset.x + selectedResolution.x, offset.y, selectedResolution.x, selectedResolution.y);
+            return (buffer1, buffer2);
+        }
+
+        public static TPageAttr.ColorMode ToColorMode(this PSXBPP depth)
+        {
+            return depth switch
+            {
+                PSXBPP.TEX_4BIT => TPageAttr.ColorMode.Mode4Bit,
+                PSXBPP.TEX_8BIT => TPageAttr.ColorMode.Mode8Bit,
+                PSXBPP.TEX_16BIT => TPageAttr.ColorMode.Mode16Bit,
+                _ => throw new System.NotImplementedException(),
+            };
+        }
+
+
+        public static byte Clamp0255(float v) => (byte)(Mathf.Clamp(v, 0, 255));
     }
 }
 
