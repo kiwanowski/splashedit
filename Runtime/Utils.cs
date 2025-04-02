@@ -332,7 +332,7 @@ namespace SplashEdit.RuntimeCode
         }
 
 
-        public static byte Clamp0255(float v) => (byte)(Mathf.Clamp(v, 0, 255));
+        public static byte ColorUnityToPSX(float v) => (byte)(Mathf.Clamp(v*255, 0, 255));
     }
 }
 

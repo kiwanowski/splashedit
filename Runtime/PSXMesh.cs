@@ -128,7 +128,7 @@ namespace SplashEdit.RuntimeCode
                     Vector3 wv = transform.TransformPoint(vertices[index]);
                     // Transform the normals to world space.
                     Vector3 wn = transform.TransformDirection(smoothNormals[index]).normalized;
-                    // Compute lighting for each vertex (this can be a custom function).
+                    // Compute lighting for each vertex.
                     Color c = PSXLightingBaker.ComputeLighting(wv, wn);
                     // Convert vertex to PSX format, including fixed-point conversion and shading.
                     return ConvertToPSXVertex(v, GTEScaling, normals[index], uv[index], psxTexture?.Width, psxTexture?.Height, c);
@@ -148,7 +148,7 @@ namespace SplashEdit.RuntimeCode
                     }
 
                     // Add the constructed triangle to the mesh.
-                    psxMesh.Triangles.Add(new Tri { v0 = convertData(vid0), v1 = convertData(vid0), v2 = convertData(vid0), Texture = psxTexture });
+                    psxMesh.Triangles.Add(new Tri { v0 = convertData(vid0), v1 = convertData(vid1), v2 = convertData(vid2), Texture = psxTexture });
                 }
             }
 
@@ -187,9 +187,9 @@ namespace SplashEdit.RuntimeCode
                 v = (byte)Mathf.Clamp((1.0f - uv.y) * (height - 1), 0, 255),
 
                 // Apply lighting to the colors.
-                r = Utils.Clamp0255(color.r),
-                g = Utils.Clamp0255(color.g),
-                b = Utils.Clamp0255(color.b),
+                r = Utils.ColorUnityToPSX(color.r),
+                g = Utils.ColorUnityToPSX(color.g),
+                b = Utils.ColorUnityToPSX(color.b),
             };
 
             return psxVertex;
