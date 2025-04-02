@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace SplashEdit.RuntimeCode
@@ -26,6 +27,9 @@ namespace SplashEdit.RuntimeCode
         public PSXVertex v0;
         public PSXVertex v1;
         public PSXVertex v2;
+
+        public PSXTexture2D Texture;
+        public readonly PSXVertex[] Vertexes => new PSXVertex[] { v0, v1, v2 };
     }
 
     /// <summary>
@@ -36,6 +40,40 @@ namespace SplashEdit.RuntimeCode
     {
         public List<Tri> Triangles;
 
+        private static Vector3[] RecalculateSmoothNormals(Mesh mesh)
+        {
+            Vector3[] normals = new Vector3[mesh.vertexCount];
+            Dictionary<Vector3, List<int>> vertexMap = new Dictionary<Vector3, List<int>>();
+
+            for (int i = 0; i < mesh.vertexCount; i++)
+            {
+                Vector3 vertex = mesh.vertices[i];
+                if (!vertexMap.ContainsKey(vertex))
+                {
+                    vertexMap[vertex] = new List<int>();
+                }
+                vertexMap[vertex].Add(i);
+            }
+
+            foreach (var kvp in vertexMap)
+            {
+                Vector3 smoothNormal = Vector3.zero;
+                foreach (int index in kvp.Value)
+                {
+                    smoothNormal += mesh.normals[index];
+                }
+                smoothNormal.Normalize();
+
+                foreach (int index in kvp.Value)
+                {
+                    normals[index] = smoothNormal;
+                }
+            }
+
+            return normals;
+        }
+
+
         /// <summary>
         /// Creates a PSXMesh from a Unity Mesh by converting its vertices, normals, UVs, and applying shading.
         /// </summary>
@@ -44,40 +82,74 @@ namespace SplashEdit.RuntimeCode
         /// <param name="textureHeight">Height of the texture (default is 256).</param>
         /// <param name="transform">Optional transform to convert vertices to world space.</param>
         /// <returns>A new PSXMesh containing the converted triangles.</returns>
-        public static PSXMesh CreateFromUnityMesh(Mesh mesh, int textureWidth = 256, int textureHeight = 256, Transform transform = null)
+        public static PSXMesh CreateFromUnityRenderer(Renderer renderer, float GTEScaling, Transform transform, List<PSXTexture2D> textures)
         {
             PSXMesh psxMesh = new PSXMesh { Triangles = new List<Tri>() };
 
-            // Get mesh data arrays.
-            Vector3[] vertices = mesh.vertices;
-            Vector3[] normals = mesh.normals;
-            Vector2[] uv = mesh.uv;
-            int[] indices = mesh.triangles;
+            // Get materials and mesh.
+            Material[] materials = renderer.sharedMaterials;
+            Mesh mesh = renderer.GetComponent<MeshFilter>().sharedMesh;
 
-            // Determine the primary light's direction and color for shading.
-            Light mainLight = RenderSettings.sun;
-            Vector3 lightDir = mainLight ? mainLight.transform.forward : Vector3.down; // Fixed: Removed negation.
-            Color lightColor = mainLight ? mainLight.color * mainLight.intensity : Color.white;
-
-            // Iterate over each triangle (group of 3 indices).
-            for (int i = 0; i < indices.Length; i += 3)
+            // Iterate over each submesh.
+            for (int submeshIndex = 0; submeshIndex < materials.Length; submeshIndex++)
             {
-                int vid0 = indices[i];
-                int vid1 = indices[i + 1];
-                int vid2 = indices[i + 2];
+                // Get the triangles for this submesh.
+                int[] submeshTriangles = mesh.GetTriangles(submeshIndex);
 
-                // Transform vertices to world space if a transform is provided.
-                Vector3 v0 = transform ? transform.TransformPoint(vertices[vid0]) : vertices[vid0];
-                Vector3 v1 = transform ? transform.TransformPoint(vertices[vid1]) : vertices[vid1];
-                Vector3 v2 = transform ? transform.TransformPoint(vertices[vid2]) : vertices[vid2];
+                // Get the material for this submesh.
+                Material material = materials[submeshIndex];
 
-                // Convert vertices to PSX format including fixed-point conversion and shading.
-                PSXVertex psxV0 = ConvertToPSXVertex(v0, normals[vid0], uv[vid0], lightDir, lightColor, textureWidth, textureHeight);
-                PSXVertex psxV1 = ConvertToPSXVertex(v1, normals[vid1], uv[vid1], lightDir, lightColor, textureWidth, textureHeight);
-                PSXVertex psxV2 = ConvertToPSXVertex(v2, normals[vid2], uv[vid2], lightDir, lightColor, textureWidth, textureHeight);
+                // Get the corresponding texture for this material (assume mainTexture).
+                Texture2D texture = material.mainTexture as Texture2D;
+                PSXTexture2D psxTexture = null;
 
-                // Add the constructed triangle to the mesh.
-                psxMesh.Triangles.Add(new Tri { v0 = psxV0, v1 = psxV1, v2 = psxV2 });
+                if (texture != null)
+                {
+                    // Find the corresponding PSX texture based on the Unity texture.
+                    psxTexture = textures.FirstOrDefault(t => t.OriginalTexture == texture);
+                }
+
+                if (psxTexture == null)
+                {
+                    continue;
+                }
+
+                // Get mesh data arrays.
+                mesh.RecalculateNormals();
+                Vector3[] vertices = mesh.vertices;
+                Vector3[] normals = mesh.normals;
+                Vector3[] smoothNormals = RecalculateSmoothNormals(mesh);
+                Vector2[] uv = mesh.uv;
+                PSXVertex convertData(int index)
+                {
+                    // Scale the vertex based on world scale.
+                    Vector3 v = Vector3.Scale(vertices[index], transform.lossyScale);
+                    // Transform the vertex to world space.
+                    Vector3 wv = transform.TransformPoint(vertices[index]);
+                    // Transform the normals to world space.
+                    Vector3 wn = transform.TransformDirection(smoothNormals[index]).normalized;
+                    // Compute lighting for each vertex (this can be a custom function).
+                    Color c = PSXLightingBaker.ComputeLighting(wv, wn);
+                    // Convert vertex to PSX format, including fixed-point conversion and shading.
+                    return ConvertToPSXVertex(v, GTEScaling, normals[index], uv[index], psxTexture?.Width, psxTexture?.Height, c);
+                }
+                // Iterate through the triangles of the submesh.
+                for (int i = 0; i < submeshTriangles.Length; i += 3)
+                {
+                    int vid0 = submeshTriangles[i];
+                    int vid1 = submeshTriangles[i + 1];
+                    int vid2 = submeshTriangles[i + 2];
+
+                    Vector3 faceNormal = Vector3.Cross(vertices[vid1] - vertices[vid0], vertices[vid2] - vertices[vid0]).normalized;
+
+                    if (Vector3.Dot(faceNormal, normals[vid0]) < 0)
+                    {
+                        (vid1, vid2) = (vid2, vid1);
+                    }
+
+                    // Add the constructed triangle to the mesh.
+                    psxMesh.Triangles.Add(new Tri { v0 = convertData(vid0), v1 = convertData(vid0), v2 = convertData(vid0), Texture = psxTexture });
+                }
             }
 
             return psxMesh;
@@ -94,36 +166,30 @@ namespace SplashEdit.RuntimeCode
         /// <param name="textureWidth">Width of the texture for UV scaling.</param>
         /// <param name="textureHeight">Height of the texture for UV scaling.</param>
         /// <returns>A PSXVertex with converted coordinates, normals, UVs, and color.</returns>
-        private static PSXVertex ConvertToPSXVertex(Vector3 vertex, Vector3 normal, Vector2 uv, Vector3 lightDir, Color lightColor, int textureWidth, int textureHeight)
+        private static PSXVertex ConvertToPSXVertex(Vector3 vertex, float GTEScaling, Vector3 normal, Vector2 uv, int? textureWidth, int? textureHeight, Color color)
         {
-            // Calculate light intensity based on the angle between the normalized normal and light direction.
-            float lightIntensity = Mathf.Clamp01(Vector3.Dot(normal.normalized, lightDir));
-            // Remap the intensity to a specific range for a softer shading effect.
-            lightIntensity = Mathf.Lerp(0.4f, 0.7f, lightIntensity);
-
-            // Compute the final shaded color by multiplying the light color by the intensity.
-            Color shadedColor = lightColor * lightIntensity;
-
+            int width = textureWidth ?? 0;
+            int height = textureHeight ?? 0;
             PSXVertex psxVertex = new PSXVertex
             {
                 // Convert position to fixed-point, clamping values to a defined range.
-                vx = (short)(Mathf.Clamp(vertex.x, -4f, 3.999f) * 4096),
-                vy = (short)(Mathf.Clamp(-vertex.y, -4f, 3.999f) * 4096),
-                vz = (short)(Mathf.Clamp(vertex.z, -4f, 3.999f) * 4096),
+                vx = PSXTrig.ConvertCoordinateToPSX(vertex.x, GTEScaling),
+                vy = PSXTrig.ConvertCoordinateToPSX(-vertex.y, GTEScaling),
+                vz = PSXTrig.ConvertCoordinateToPSX(vertex.z, GTEScaling),
 
                 // Convert normals to fixed-point.
-                nx = (short)(Mathf.Clamp(normal.x, -4f, 3.999f) * 4096),
-                ny = (short)(Mathf.Clamp(-normal.y, -4f, 3.999f) * 4096),
-                nz = (short)(Mathf.Clamp(normal.z, -4f, 3.999f) * 4096),
+                nx = PSXTrig.ConvertCoordinateToPSX(normal.x),
+                ny = PSXTrig.ConvertCoordinateToPSX(-normal.y),
+                nz = PSXTrig.ConvertCoordinateToPSX(normal.z),
 
                 // Map UV coordinates to a byte range after scaling based on texture dimensions.
-                u = (byte)(Mathf.Clamp((uv.x * (textureWidth - 1)), 0, 255)),
-                v = (byte)(Mathf.Clamp(((1.0f - uv.y) * (textureHeight - 1)), 0, 255)),
+                u = (byte)Mathf.Clamp(uv.x * (width - 1), 0, 255),
+                v = (byte)Mathf.Clamp((1.0f - uv.y) * (height - 1), 0, 255),
 
-                // Convert the computed color to a byte range.
-                r = (byte)(Mathf.Clamp(shadedColor.r * 255, 0, 255)),
-                g = (byte)(Mathf.Clamp(shadedColor.g * 255, 0, 255)),
-                b = (byte)(Mathf.Clamp(shadedColor.b * 255, 0, 255))
+                // Apply lighting to the colors.
+                r = Utils.Clamp0255(color.r),
+                g = Utils.Clamp0255(color.g),
+                b = Utils.Clamp0255(color.b),
             };
 
             return psxVertex;

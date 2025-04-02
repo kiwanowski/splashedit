@@ -1,7 +1,61 @@
+using System.Runtime.InteropServices;
+using UnityEditor;
+using System.Collections.Generic;
+using UnityEditor;
 using UnityEngine;
 
 namespace SplashEdit.RuntimeCode
 {
+
+    public static class DataStorage
+    {
+        private static readonly string psxDataPath = "Assets/PSXData.asset";
+
+        /// <summary>
+        /// Loads stored PSX data from the asset.
+        /// </summary>
+        public static PSXData LoadData(out Vector2 selectedResolution, out bool dualBuffering, out bool verticalLayout, out List<ProhibitedArea> prohibitedAreas)
+        {
+            var _psxData = AssetDatabase.LoadAssetAtPath<PSXData>(psxDataPath);
+            if (!_psxData)
+            {
+                _psxData = ScriptableObject.CreateInstance<PSXData>();
+                AssetDatabase.CreateAsset(_psxData, psxDataPath);
+                AssetDatabase.SaveAssets();
+            }
+
+            selectedResolution = _psxData.OutputResolution;
+            dualBuffering = _psxData.DualBuffering;
+            verticalLayout = _psxData.VerticalBuffering;
+            prohibitedAreas = _psxData.ProhibitedAreas;
+            return _psxData;
+        }
+        public static PSXData LoadData()
+        {
+            PSXData psxData = AssetDatabase.LoadAssetAtPath<PSXData>(psxDataPath);
+
+            if (!psxData)
+            {
+                psxData = ScriptableObject.CreateInstance<PSXData>();
+                AssetDatabase.CreateAsset(psxData, psxDataPath);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+            }
+
+            return psxData;
+        }
+
+        public static void StoreData(PSXData psxData)
+        {
+            if (psxData != null)
+            {
+                EditorUtility.SetDirty(psxData);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+            }
+        }
+    }
+
     /// <summary>
     /// Represents a prohibited area in PlayStation 2D VRAM where textures should not be packed.
     /// This class provides conversion methods to and from Unity's Rect structure.
@@ -41,4 +95,244 @@ namespace SplashEdit.RuntimeCode
             return new Rect(X, Y, Width, Height);
         }
     }
+    /// <summary>
+    /// A utility class containing methods for converting Unity-specific data formats to PSX-compatible formats.
+    /// This includes converting coordinates and rotations to PSX's 3.12 fixed-point format.
+    /// </summary>
+    public static class PSXTrig
+    {
+        /// <summary>
+        /// Converts a floating-point coordinate to a PSX-compatible 3.12 fixed-point format.
+        /// The value is clamped to the range [-4, 3.999] and scaled by the provided GTEScaling factor.
+        /// </summary>
+        /// <param name="value">The coordinate value to convert.</param>
+        /// <param name="GTEScaling">A scaling factor for the value (default is 1.0f).</param>
+        /// <returns>The converted coordinate in 3.12 fixed-point format.</returns>
+        public static short ConvertCoordinateToPSX(float value, float GTEScaling = 1.0f)
+        {
+            return (short)(Mathf.Clamp(value / GTEScaling, -4f, 3.999f) * 4096);
+        }
+
+        /// <summary>
+        /// Converts a quaternion rotation to a PSX-compatible 3x3 rotation matrix.
+        /// The matrix is adjusted for the difference in the Y-axis orientation between Unity (Y-up) and PSX (Y-down).
+        /// Each matrix element is converted to a 3.12 fixed-point format.
+        /// </summary>
+        /// <param name="rotation">The quaternion representing the rotation to convert.</param>
+        /// <returns>A 3x3 matrix representing the PSX-compatible rotation.</returns>
+        public static int[,] ConvertRotationToPSXMatrix(Quaternion rotation)
+        {
+            // Standard quaternion-to-matrix conversion.
+            float x = rotation.x, y = rotation.y, z = rotation.z, w = rotation.w;
+
+            float m00 = 1f - 2f * (y * y + z * z);
+            float m01 = 2f * (x * y - z * w);
+            float m02 = 2f * (x * z + y * w);
+
+            float m10 = 2f * (x * y + z * w);
+            float m11 = 1f - 2f * (x * x + z * z);
+            float m12 = 2f * (y * z - x * w);
+
+            float m20 = 2f * (x * z - y * w);
+            float m21 = 2f * (y * z + x * w);
+            float m22 = 1f - 2f * (x * x + y * y);
+
+            // Apply Y-axis flip to match the PSX's Y-down convention.
+            // This replicates the behavior of:
+            // { m00, -m01, m02 },
+            // { -m10, m11, -m12 },
+            // { m20, -m21, m22 }
+            float[,] fixedMatrix = new float[3, 3]
+            {
+        { m00, -m01, m02 },
+        { -m10, m11, -m12 },
+        { m20, -m21, m22 }
+            };
+
+            // Convert to PSX fixed-point format.
+            int[,] psxMatrix = new int[3, 3];
+            for (int i = 0; i < 3; i++)
+            {
+                for (int j = 0; j < 3; j++)
+                {
+                    psxMatrix[i, j] = ConvertToFixed12(fixedMatrix[i, j]);
+                }
+            }
+
+            return psxMatrix;
+        }
+
+        /// <summary>
+        /// Converts a floating-point value to a 3.12 fixed-point format (PSX format).
+        /// The value is scaled by a factor of 4096 and clamped to the range of a signed 16-bit integer.
+        /// </summary>
+        /// <param name="value">The floating-point value to convert.</param>
+        /// <returns>The converted value in 3.12 fixed-point format as a 16-bit signed integer.</returns>
+        public static short ConvertToFixed12(float value)
+        {
+            int fixedValue = Mathf.RoundToInt(value * 4096.0f); // Scale to 3.12 format
+            return (short)Mathf.Clamp(fixedValue, -32768, 32767); // Clamp to signed 16-bit
+        }
+    }
+    /// <summary>
+    /// Represents the attributes of a texture page in the PSX graphics system.
+    /// Provides methods for setting various properties such as the page coordinates, transparency type, color mode, dithering, and display area.
+    /// </summary>
+    public struct TPageAttr
+    {
+        public ushort info; // Stores the packed attribute information as a 16-bit unsigned integer.
+
+        /// <summary>
+        /// Sets the X-coordinate of the texture page.
+        /// The lower 4 bits of the 'info' field are used to store the X value.
+        /// </summary>
+        /// <param name="x">The X-coordinate value (0 to 15).</param>
+        /// <returns>The updated TPageAttr instance.</returns>
+        public TPageAttr SetPageX(byte x)
+        {
+            info &= 0xFFF0; // Clear lower 4 bits
+            x &= 0x0F; // Ensure only lower 4 bits are used
+            info |= x;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the Y-coordinate of the texture page.
+        /// The 4th bit of the 'info' field is used to store the Y value (0 or 1).
+        /// </summary>
+        /// <param name="y">The Y-coordinate value (0 or 1).</param>
+        /// <returns>The updated TPageAttr instance.</returns>
+        public TPageAttr SetPageY(byte y)
+        {
+            info &= 0xFFEF; // Clear bit 4
+            y &= 0x01; // Ensure only lower 1 bit is used
+            info |= (ushort)(y << 4);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the transparency type of the texture page.
+        /// The transparency type is stored in bits 5 and 6 of the 'info' field.
+        /// </summary>
+        /// <param name="trans">The transparency type to set.</param>
+        /// <returns>The updated TPageAttr instance.</returns>
+        public TPageAttr Set(SemiTrans trans)
+        {
+            info &= 0xFF9F; // Clear bits 5 and 6
+            uint t = (uint)trans;
+            info |= (ushort)(t << 5);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the color mode of the texture page.
+        /// The color mode is stored in bits 7 and 8 of the 'info' field.
+        /// </summary>
+        /// <param name="mode">The color mode to set (4-bit, 8-bit, or 16-bit).</param>
+        /// <returns>The updated TPageAttr instance.</returns>
+        public TPageAttr Set(ColorMode mode)
+        {
+            info &= 0xFE7F; // Clear bits 7 and 8
+            uint m = (uint)mode;
+            info |= (ushort)(m << 7);
+            return this;
+        }
+
+        /// <summary>
+        /// Enables or disables dithering for the texture page.
+        /// Dithering is stored in bit 9 of the 'info' field.
+        /// </summary>
+        /// <param name="dithering">True to enable dithering, false to disable it.</param>
+        /// <returns>The updated TPageAttr instance.</returns>
+        public TPageAttr SetDithering(bool dithering)
+        {
+            if (dithering)
+                info |= 0x0200; // Set bit 9 to enable dithering
+            else
+                info &= 0xFDFF; // Clear bit 9 to disable dithering
+            return this;
+        }
+
+        /// <summary>
+        /// Disables the display area for the texture page.
+        /// This will clear bit 10 of the 'info' field.
+        /// </summary>
+        /// <returns>The updated TPageAttr instance.</returns>
+        public TPageAttr DisableDisplayArea()
+        {
+            info &= 0xFBFF; // Clear bit 10
+            return this;
+        }
+
+        /// <summary>
+        /// Enables the display area for the texture page.
+        /// This will set bit 10 of the 'info' field.
+        /// </summary>
+        /// <returns>The updated TPageAttr instance.</returns>
+        public TPageAttr EnableDisplayArea()
+        {
+            info |= 0x0400; // Set bit 10 to enable display area
+            return this;
+        }
+
+        /// <summary>
+        /// Returns a string representation of the TPageAttr instance, showing the 'info' value in hexadecimal.
+        /// </summary>
+        /// <returns>A string representing the 'info' value in hexadecimal format.</returns>
+        public override string ToString() => $"Info: 0x{info:X4}";
+
+        // Define the enums for SemiTrans and ColorMode (assuming their values)
+
+        /// <summary>
+        /// Defines the transparency types for a texture page.
+        /// </summary>
+        public enum SemiTrans : uint
+        {
+            None = 0,
+            Type1 = 1,
+            Type2 = 2,
+            Type3 = 3
+        }
+
+        /// <summary>
+        /// Defines the color modes for a texture page.
+        /// </summary>
+        public enum ColorMode : uint
+        {
+            Mode4Bit = 0,
+            Mode8Bit = 1,
+            Mode16Bit = 2
+        }
+    }
+
+
+    public static class Utils
+    {
+        public static (Rect, Rect) BufferForResolution(Vector2 selectedResolution, bool verticalLayout, Vector2 offset = default)
+        {
+            if (offset == default)
+            {
+                offset = Vector2.zero;
+            }
+            Rect buffer1 = new Rect(offset.x, offset.y, selectedResolution.x, selectedResolution.y);
+            Rect buffer2 = verticalLayout ? new Rect(offset.x, 256, selectedResolution.x, selectedResolution.y)
+                                          : new Rect(offset.x + selectedResolution.x, offset.y, selectedResolution.x, selectedResolution.y);
+            return (buffer1, buffer2);
+        }
+
+        public static TPageAttr.ColorMode ToColorMode(this PSXBPP depth)
+        {
+            return depth switch
+            {
+                PSXBPP.TEX_4BIT => TPageAttr.ColorMode.Mode4Bit,
+                PSXBPP.TEX_8BIT => TPageAttr.ColorMode.Mode8Bit,
+                PSXBPP.TEX_16BIT => TPageAttr.ColorMode.Mode16Bit,
+                _ => throw new System.NotImplementedException(),
+            };
+        }
+
+
+        public static byte Clamp0255(float v) => (byte)(Mathf.Clamp(v, 0, 255));
+    }
 }
+

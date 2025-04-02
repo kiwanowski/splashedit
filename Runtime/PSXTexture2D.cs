@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -159,7 +160,7 @@ namespace SplashEdit.RuntimeCode
                 return psxTex;
             }
 
-            psxTex._maxColors = (int)Mathf.Pow((int)bitDepth, 2);
+            psxTex._maxColors = (int)Mathf.Pow(2, (int)bitDepth);
 
             TextureQuantizer.QuantizedResult result = TextureQuantizer.Quantize(inputTexture, psxTex._maxColors);
 
@@ -230,7 +231,7 @@ namespace SplashEdit.RuntimeCode
                 {
                     for (int x = 0; x < Height; x++)
                     {
-                        tex.SetPixel(x, y, ImageData[x, y].GetUnityColor());
+                        tex.SetPixel(x, Height - 1 - y, ImageData[x, y].GetUnityColor());
                     }
                 }
 
@@ -274,6 +275,16 @@ namespace SplashEdit.RuntimeCode
 
             return vramTexture;
 
+        }
+        /// <summary>
+        /// Check if we need to update stored texture
+        /// </summary>
+        /// <param name="bitDepth">new settings for color bit depth</param>
+        /// <param name="texture">new texture</param>
+        /// <returns>return true if sored texture is different from a new one</returns>
+        internal bool NeedUpdate(PSXBPP bitDepth, Texture2D texture)
+        {
+            return BitDepth != bitDepth || texture.GetInstanceID() != texture.GetInstanceID();
         }
     }
 }

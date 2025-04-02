@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using SplashEdit.RuntimeCode;
 using Unity.Collections;
 using UnityEditor;
@@ -11,8 +12,10 @@ namespace SplashEdit.EditorCode
 {
     public class VRAMEditorWindow : EditorWindow
     {
-        private const int VramWidth = 1024;
-        private const int VramHeight = 512;
+        private int VramWidth => VRAMPacker.VramWidth;
+        private int VramHeight => VRAMPacker.VramHeight;
+
+        private static readonly Vector2 MinSize = new Vector2(800, 600);
         private List<ProhibitedArea> prohibitedAreas = new List<ProhibitedArea>();
         private Vector2 scrollPosition;
         private Texture2D vramImage;
@@ -22,8 +25,6 @@ namespace SplashEdit.EditorCode
         private Color bufferColor1 = new Color(1, 0, 0, 0.5f);
         private Color bufferColor2 = new Color(0, 1, 0, 0.5f);
         private Color prohibitedColor = new Color(1, 0, 0, 0.3f);
-
-        private static string _psxDataPath = "Assets/PSXData.asset";
         private PSXData _psxData;
 
         private static readonly Vector2[] resolutions =
@@ -33,14 +34,15 @@ namespace SplashEdit.EditorCode
         new Vector2(368, 240), new Vector2(368, 480),
         new Vector2(512, 240), new Vector2(512, 480),
         new Vector2(640, 240), new Vector2(640, 480)
-    };
+        };
+        private static string[] resolutionsStrings => resolutions.Select(c => $"{c.x}x{c.y}").ToArray();
 
         [MenuItem("Window/VRAM Editor")]
         public static void ShowWindow()
         {
             VRAMEditorWindow window = GetWindow<VRAMEditorWindow>("VRAM Editor");
             // Set minimum window dimensions.
-            window.minSize = new Vector2(1600, 600);
+            window.minSize = MinSize;
         }
 
         private void OnEnable()
@@ -53,9 +55,9 @@ namespace SplashEdit.EditorCode
             blackPixels.Dispose();
 
             // Ensure minimum window size is applied.
-            this.minSize = new Vector2(800, 600);
+            this.minSize = MinSize;
 
-            LoadData();
+            _psxData = DataStorage.LoadData(out selectedResolution, out dualBuffering, out verticalLayout, out prohibitedAreas);
         }
 
         /// <summary>
@@ -113,13 +115,11 @@ namespace SplashEdit.EditorCode
             PSXObjectExporter[] objects = FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
             foreach (PSXObjectExporter exp in objects)
             {
-                exp.CreatePSXTexture2D();
+                exp.CreatePSXTextures2D();
             }
 
             // Define framebuffer regions based on selected resolution and layout.
-            Rect buffer1 = new Rect(0, 0, selectedResolution.x, selectedResolution.y);
-            Rect buffer2 = verticalLayout ? new Rect(0, 256, selectedResolution.x, selectedResolution.y)
-                                          : new Rect(selectedResolution.x, 0, selectedResolution.x, selectedResolution.y);
+            (Rect buffer1, Rect buffer2) = Utils.BufferForResolution(selectedResolution, verticalLayout);
 
             List<Rect> framebuffers = new List<Rect> { buffer1 };
             if (dualBuffering)
@@ -136,20 +136,24 @@ namespace SplashEdit.EditorCode
             {
                 for (int x = 0; x < VramWidth; x++)
                 {
-                    vramImage.SetPixel(x, VramHeight - y - 1, packed._vramPixels[x, y].GetUnityColor());
+                    vramImage.SetPixel(x, VramHeight - y - 1, packed.vramPixels[x, y].GetUnityColor());
                 }
             }
             vramImage.Apply();
 
             // Prompt the user to select a file location and save the VRAM data.
             string path = EditorUtility.SaveFilePanel("Select Output File", "", "output", "bin");
-            using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
+
+            if (path != string.Empty)
             {
-                for (int y = 0; y < VramHeight; y++)
+                using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
                 {
-                    for (int x = 0; x < VramWidth; x++)
+                    for (int y = 0; y < VramHeight; y++)
                     {
-                        writer.Write(packed._vramPixels[x, y].Pack());
+                        for (int x = 0; x < VramWidth; x++)
+                        {
+                            writer.Write(packed.vramPixels[x, y].Pack());
+                        }
                     }
                 }
             }
@@ -162,12 +166,11 @@ namespace SplashEdit.EditorCode
             GUILayout.Label("VRAM Editor", EditorStyles.boldLabel);
 
             // Dropdown for resolution selection.
-            selectedResolution = resolutions[EditorGUILayout.Popup("Resolution", System.Array.IndexOf(resolutions, selectedResolution),
-                new string[] { "256x240", "256x480", "320x240", "320x480", "368x240", "368x480", "512x240", "512x480", "640x240", "640x480" })];
+            selectedResolution = resolutions[EditorGUILayout.Popup("Resolution", System.Array.IndexOf(resolutions, selectedResolution), resolutionsStrings)];
 
             // Check resolution constraints for dual buffering.
-            bool canDBHorizontal = selectedResolution[0] * 2 <= 1024;
-            bool canDBVertical = selectedResolution[1] * 2 <= 512;
+            bool canDBHorizontal = selectedResolution.x * 2 <= VramWidth;
+            bool canDBVertical = selectedResolution.y * 2 <= VramHeight;
 
             if (canDBHorizontal || canDBVertical)
             {
@@ -192,30 +195,51 @@ namespace SplashEdit.EditorCode
             }
 
             GUILayout.Space(10);
-            GUILayout.Label("Prohibited areas", EditorStyles.boldLabel);
-            scrollPosition = GUILayout.BeginScrollView(scrollPosition, GUILayout.MaxHeight(150f));
+            GUILayout.Label("Prohibited Areas", EditorStyles.boldLabel);
+            GUILayout.Space(10);
+
+            scrollPosition = GUILayout.BeginScrollView(scrollPosition, false, true, GUILayout.MinHeight(300f), GUILayout.ExpandWidth(true));
 
             // List and edit each prohibited area.
+            List<int> toRemove = new List<int>();
+
             for (int i = 0; i < prohibitedAreas.Count; i++)
             {
                 var area = prohibitedAreas[i];
 
-                area.X = EditorGUILayout.IntField("X", area.X);
-                area.Y = EditorGUILayout.IntField("Y", area.Y);
+                GUI.backgroundColor = new Color(0.95f, 0.95f, 0.95f);
+                GUILayout.BeginVertical("box");
+
+                GUI.backgroundColor = Color.white;
+
+                // Display fields for editing the area
+                area.X = EditorGUILayout.IntField("X Coordinate", area.X);
+                area.Y = EditorGUILayout.IntField("Y Coordinate", area.Y);
                 area.Width = EditorGUILayout.IntField("Width", area.Width);
                 area.Height = EditorGUILayout.IntField("Height", area.Height);
 
-                if (GUILayout.Button("Remove"))
+
+                if (GUILayout.Button("Remove", GUILayout.Height(30)))
                 {
-                    prohibitedAreas.RemoveAt(i);
-                    break;
+                    toRemove.Add(i); // Mark for removal
                 }
 
+
                 prohibitedAreas[i] = area;
+
+                GUILayout.EndVertical();
                 GUILayout.Space(10);
             }
+
+            // Remove the areas marked for deletion outside the loop to avoid skipping elements
+            foreach (var index in toRemove.OrderByDescending(x => x))
+            {
+                prohibitedAreas.RemoveAt(index);
+            }
+
             GUILayout.EndScrollView();
             GUILayout.Space(10);
+
             if (GUILayout.Button("Add Prohibited Area"))
             {
                 prohibitedAreas.Add(new ProhibitedArea());
@@ -230,19 +254,26 @@ namespace SplashEdit.EditorCode
             // Button to save settings; saving now occurs only on button press.
             if (GUILayout.Button("Save Settings"))
             {
-                StoreData();
+                _psxData.OutputResolution = selectedResolution;
+                _psxData.DualBuffering = dualBuffering;
+                _psxData.VerticalBuffering = verticalLayout;
+                _psxData.ProhibitedAreas = prohibitedAreas;
+
+                DataStorage.StoreData(_psxData);
+                EditorUtility.DisplayDialog("splashedit", "Vram configuration saved", "OK");
             }
 
             GUILayout.EndVertical();
 
             // Display VRAM image preview.
             Rect vramRect = GUILayoutUtility.GetRect(VramWidth, VramHeight, GUILayout.ExpandWidth(false));
-            EditorGUI.DrawPreviewTexture(vramRect, vramImage, null, ScaleMode.ScaleToFit, 0, 0, ColorWriteMask.All);
+            if (vramImage)
+            {
+                EditorGUI.DrawPreviewTexture(vramRect, vramImage, null, ScaleMode.ScaleToFit, 0, 0, ColorWriteMask.All);
+            }
 
             // Draw framebuffer overlays.
-            Rect buffer1 = new Rect(vramRect.x, vramRect.y, selectedResolution.x, selectedResolution.y);
-            Rect buffer2 = verticalLayout ? new Rect(vramRect.x, 256, selectedResolution.x, selectedResolution.y)
-                                          : new Rect(vramRect.x + selectedResolution.x, vramRect.y, selectedResolution.x, selectedResolution.y);
+            (Rect buffer1, Rect buffer2) = Utils.BufferForResolution(selectedResolution, verticalLayout, vramRect.min);
 
             EditorGUI.DrawRect(buffer1, bufferColor1);
             GUI.Label(new Rect(buffer1.center.x - 40, buffer1.center.y - 10, 120, 20), "Framebuffer A", EditorStyles.boldLabel);
@@ -264,41 +295,9 @@ namespace SplashEdit.EditorCode
         }
 
         /// <summary>
-        /// Loads stored PSX data from the asset.
-        /// </summary>
-        private void LoadData()
-        {
-            _psxData = AssetDatabase.LoadAssetAtPath<PSXData>(_psxDataPath);
-            if (!_psxData)
-            {
-                _psxData = CreateInstance<PSXData>();
-                AssetDatabase.CreateAsset(_psxData, _psxDataPath);
-                AssetDatabase.SaveAssets();
-            }
-
-            selectedResolution = _psxData.OutputResolution;
-            dualBuffering = _psxData.DualBuffering;
-            verticalLayout = _psxData.VerticalBuffering;
-            prohibitedAreas = _psxData.ProhibitedAreas;
-        }
-
-        /// <summary>
         /// Stores current configuration to the PSX data asset.
         /// This is now triggered manually via the "Save Settings" button.
         /// </summary>
-        private void StoreData()
-        {
-            if (_psxData != null)
-            {
-                _psxData.OutputResolution = selectedResolution;
-                _psxData.DualBuffering = dualBuffering;
-                _psxData.VerticalBuffering = verticalLayout;
-                _psxData.ProhibitedAreas = prohibitedAreas;
 
-                EditorUtility.SetDirty(_psxData);
-                AssetDatabase.SaveAssets();
-                AssetDatabase.Refresh();
-            }
-        }
     }
 }
