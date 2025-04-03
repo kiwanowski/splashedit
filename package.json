@@ -1,8 +1,10 @@
 {
-    "name": "net.psxsplash.splashedit",
-    "version": "1.0.0",
-    "displayName": "Splashedit",
-    "description": "A toolkit for PSX asset management within Unity",
-    "unity": "6000.0"
+  "name": "net.psxsplash.splashedit",
+  "version": "1.0.0",
+  "displayName": "Splashedit",
+  "description": "A toolkit for PSX asset management within Unity",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.unity.ai.navigation": "2.0.6"
   }
-  
+}

@@ -1,7 +1,5 @@
-using System.Runtime.InteropServices;
 using UnityEditor;
 using System.Collections.Generic;
-using UnityEditor;
 using UnityEngine;
 
 namespace SplashEdit.RuntimeCode

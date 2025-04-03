@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.AI;
 
 namespace SplashEdit.RuntimeCode
 {
@@ -16,6 +17,7 @@ namespace SplashEdit.RuntimeCode
 
         private PSXObjectExporter[] _exporters;
         private TextureAtlas[] _atlases;
+        private PSXNavMesh[] _navmeshes;
 
         private PSXData _psxData;
 
@@ -34,6 +36,13 @@ namespace SplashEdit.RuntimeCode
                 exp.CreatePSXTextures2D();
                 exp.CreatePSXMesh(GTEScaling);
             }
+
+            _navmeshes = FindObjectsByType<PSXNavMesh>(FindObjectsSortMode.None);
+            foreach (PSXNavMesh navmesh in _navmeshes)
+            {
+                navmesh.CreateNavmesh(GTEScaling);
+            }
+
             PackTextures();
             ExportFile();
         }
@@ -73,6 +82,10 @@ namespace SplashEdit.RuntimeCode
             List<long> clutOffsetPlaceholderPositions = new List<long>();
             List<long> clutDataOffsets = new List<long>();
 
+            // Lists for navmesh data offsets.
+            List<long> navmeshOffsetPlaceholderPositions = new List<long>();
+            List<long> navmeshDataOffsets = new List<long>();
+
             int clutCount = 0;
 
             // Cluts
@@ -94,9 +107,10 @@ namespace SplashEdit.RuntimeCode
                 writer.Write('P'); // 1 byte
                 writer.Write((ushort)1); // 2 bytes - version
                 writer.Write((ushort)_exporters.Length); // 2 bytes
+                writer.Write((ushort)_navmeshes.Length);
                 writer.Write((ushort)_atlases.Length); // 2 bytes
                 writer.Write((ushort)clutCount); // 2 bytes
-                for (int i = 0; i < 3; i++) writer.Write((ushort)0);
+                for (int i = 0; i < 2; i++) writer.Write((ushort)0);
 
                 // GameObject section (exporters)
                 foreach (PSXObjectExporter exporter in _exporters)
@@ -122,7 +136,18 @@ namespace SplashEdit.RuntimeCode
                     writer.Write((int)rotationMatrix[2, 2]);
 
                     writer.Write((ushort)exporter.Mesh.Triangles.Count);
-                    writer.Write((ushort) 0);
+                    writer.Write((ushort)0);
+                }
+
+                // Navmesh metadata section
+                foreach (PSXNavMesh navmesh in _navmeshes)
+                {
+                    // Write placeholder for navmesh raw data offset.
+                    navmeshOffsetPlaceholderPositions.Add(writer.BaseStream.Position);
+                    writer.Write((int)0); // 4-byte placeholder for navmesh data offset.
+
+                    writer.Write((ushort)navmesh.Navmesh.Count);
+                    writer.Write((ushort)0);
                 }
 
                 // Atlas metadata section
@@ -150,7 +175,7 @@ namespace SplashEdit.RuntimeCode
                             writer.Write((ushort)texture.ClutPackingX); // 2 bytes
                             writer.Write((ushort)texture.ClutPackingY); // 2 bytes
                             writer.Write((ushort)texture.ColorPalette.Count); // 2 bytes
-                            writer.Write((ushort) 0); // 2 bytes
+                            writer.Write((ushort)0); // 2 bytes
                         }
                     }
                 }
@@ -228,6 +253,27 @@ namespace SplashEdit.RuntimeCode
                     }
                 }
 
+                foreach (PSXNavMesh navmesh in _navmeshes) {
+                    AlignToFourBytes(writer);
+                    long navmeshDataOffset = writer.BaseStream.Position;
+                    navmeshDataOffsets.Add(navmeshDataOffset);
+
+                    foreach(PSXNavMeshTri tri in navmesh.Navmesh) {
+                        writer.Write((ushort) tri.v0.vx);
+                        writer.Write((ushort) tri.v0.vy);
+                        writer.Write((ushort) tri.v0.vz);
+
+                        writer.Write((ushort) tri.v1.vx);
+                        writer.Write((ushort) tri.v1.vy);
+                        writer.Write((ushort) tri.v1.vz);
+
+                        writer.Write((ushort) tri.v2.vx);
+                        writer.Write((ushort) tri.v2.vy);
+                        writer.Write((ushort) tri.v2.vz);
+                    }
+
+                }
+
                 // Atlas data section: Write raw texture data for each atlas.
                 foreach (TextureAtlas atlas in _atlases)
                 {
@@ -257,8 +303,9 @@ namespace SplashEdit.RuntimeCode
                             long clutDataOffset = writer.BaseStream.Position;
                             clutDataOffsets.Add(clutDataOffset);
 
-                            foreach(VRAMPixel color in texture.ColorPalette) {
-                                writer.Write((ushort) color.Pack());
+                            foreach (VRAMPixel color in texture.ColorPalette)
+                            {
+                                writer.Write((ushort)color.Pack());
                             }
                         }
                     }
@@ -278,6 +325,21 @@ namespace SplashEdit.RuntimeCode
                 {
                     Debug.LogError("Mismatch between metadata mesh offset placeholders and mesh data blocks!");
                 }
+
+                // Backfill the navmesh offsets into the metadata section.
+                if (navmeshOffsetPlaceholderPositions.Count == navmeshDataOffsets.Count)
+                {
+                    for (int i = 0; i < navmeshOffsetPlaceholderPositions.Count; i++)
+                    {
+                        writer.Seek((int)navmeshOffsetPlaceholderPositions[i], SeekOrigin.Begin);
+                        writer.Write((int)navmeshDataOffsets[i]);
+                    }
+                }
+                else
+                {
+                    Debug.LogError("Mismatch between metadata mesh offset placeholders and mesh data blocks!");
+                }
+
 
                 // Backfill the atlas data offsets into the metadata section.
                 if (atlasOffsetPlaceholderPositions.Count == atlasDataOffsets.Count)
