@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using JetBrains.Annotations;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.AI;
@@ -26,6 +27,10 @@ namespace SplashEdit.RuntimeCode
         private bool verticalLayout;
         private List<ProhibitedArea> prohibitedAreas;
 
+        private Vector3 _playerPos;
+        private Quaternion _playerRot;
+        private float _playerHeight;
+
         public void Export()
         {
             _psxData = DataStorage.LoadData(out selectedResolution, out dualBuffering, out verticalLayout, out prohibitedAreas);
@@ -44,6 +49,21 @@ namespace SplashEdit.RuntimeCode
             }
 
             PackTextures();
+
+            PSXPlayer player = FindObjectsByType<PSXPlayer>(FindObjectsSortMode.None).FirstOrDefault();
+            if (player != null)
+            {
+                player.FindNavmesh();
+                _playerPos = player.camPoint;
+                _playerHeight = player.PlayerHeight;
+                _playerRot = player.transform.rotation;
+            }
+            else
+            {
+                Debug.LogError("Can't export a scene without a Player created");
+                return;
+            }
+
             ExportFile();
         }
 
@@ -103,14 +123,24 @@ namespace SplashEdit.RuntimeCode
             using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
             {
                 // Header
-                writer.Write('S'); // 1 byte
-                writer.Write('P'); // 1 byte
-                writer.Write((ushort)1); // 2 bytes - version
-                writer.Write((ushort)_exporters.Length); // 2 bytes
-                writer.Write((ushort)_navmeshes.Length);
-                writer.Write((ushort)_atlases.Length); // 2 bytes
-                writer.Write((ushort)clutCount); // 2 bytes
-                for (int i = 0; i < 2; i++) writer.Write((ushort)0);
+                writer.Write('S'); // 1 byte                                                                    // 1
+                writer.Write('P'); // 1 byte                                                                    // 2 
+                writer.Write((ushort)1); // 2 bytes - version                                                   // 4
+                writer.Write((ushort)_exporters.Length); // 2 bytes                                             // 6
+                writer.Write((ushort)_navmeshes.Length);                                                        // 8
+                writer.Write((ushort)_atlases.Length); // 2 bytes                                               // 10
+                writer.Write((ushort)clutCount); // 2 bytes                                                     // 12
+                writer.Write((ushort)PSXTrig.ConvertCoordinateToPSX(_playerPos.x, GTEScaling));                 // 14
+                writer.Write((ushort)PSXTrig.ConvertCoordinateToPSX(-_playerPos.y, GTEScaling));                // 16
+                writer.Write((ushort)PSXTrig.ConvertCoordinateToPSX(_playerPos.z, GTEScaling));                 // 18
+
+                writer.Write((ushort)PSXTrig.ConvertToFixed12(_playerRot.eulerAngles.x * Mathf.Deg2Rad));       // 20
+                writer.Write((ushort)PSXTrig.ConvertToFixed12(_playerRot.eulerAngles.y * Mathf.Deg2Rad));       // 22
+                writer.Write((ushort)PSXTrig.ConvertToFixed12(_playerRot.eulerAngles.z * Mathf.Deg2Rad));       // 24
+
+                writer.Write((ushort)PSXTrig.ConvertCoordinateToPSX(_playerHeight, GTEScaling));                // 26
+
+                writer.Write((ushort)0);
 
                 // GameObject section (exporters)
                 foreach (PSXObjectExporter exporter in _exporters)
@@ -253,23 +283,25 @@ namespace SplashEdit.RuntimeCode
                     }
                 }
 
-                foreach (PSXNavMesh navmesh in _navmeshes) {
+                foreach (PSXNavMesh navmesh in _navmeshes)
+                {
                     AlignToFourBytes(writer);
                     long navmeshDataOffset = writer.BaseStream.Position;
                     navmeshDataOffsets.Add(navmeshDataOffset);
 
-                    foreach(PSXNavMeshTri tri in navmesh.Navmesh) {
-                        writer.Write((ushort) tri.v0.vx);
-                        writer.Write((ushort) tri.v0.vy);
-                        writer.Write((ushort) tri.v0.vz);
+                    foreach (PSXNavMeshTri tri in navmesh.Navmesh)
+                    {
+                        writer.Write((int)tri.v0.vx);
+                        writer.Write((int)tri.v0.vy);
+                        writer.Write((int)tri.v0.vz);
 
-                        writer.Write((ushort) tri.v1.vx);
-                        writer.Write((ushort) tri.v1.vy);
-                        writer.Write((ushort) tri.v1.vz);
+                        writer.Write((int)tri.v1.vx);
+                        writer.Write((int)tri.v1.vy);
+                        writer.Write((int)tri.v1.vz);
 
-                        writer.Write((ushort) tri.v2.vx);
-                        writer.Write((ushort) tri.v2.vy);
-                        writer.Write((ushort) tri.v2.vz);
+                        writer.Write((int)tri.v2.vx);
+                        writer.Write((int)tri.v2.vy);
+                        writer.Write((int)tri.v2.vz);
                     }
 
                 }
