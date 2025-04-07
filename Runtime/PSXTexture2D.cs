@@ -125,7 +125,8 @@ namespace SplashEdit.RuntimeCode
         public static PSXTexture2D CreateFromTexture2D(Texture2D inputTexture, PSXBPP bitDepth)
         {
             PSXTexture2D psxTex = new PSXTexture2D();
-
+            Utils.SetTextureImporterFormat(inputTexture, true);
+            
             psxTex.Width = inputTexture.width;
             psxTex.QuantizedWidth = bitDepth == PSXBPP.TEX_4BIT ? inputTexture.width / 4 :
                         bitDepth == PSXBPP.TEX_8BIT ? inputTexture.width / 2 :
