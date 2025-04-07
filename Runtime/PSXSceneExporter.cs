@@ -2,10 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using JetBrains.Annotations;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.AI;
 
 namespace SplashEdit.RuntimeCode
 {
@@ -54,7 +52,7 @@ namespace SplashEdit.RuntimeCode
             if (player != null)
             {
                 player.FindNavmesh();
-                _playerPos = player.camPoint;
+                _playerPos = player.CamPoint;
                 _playerHeight = player.PlayerHeight;
                 _playerRot = player.transform.rotation;
             }
@@ -412,15 +410,11 @@ namespace SplashEdit.RuntimeCode
         }
 
         void OnDrawGizmos()
-
         {
-
-            Gizmos.DrawIcon(transform.position, "Packages/net.psxsplash.splashedit/Icons/PSXSceneExporter.png", true);
             Vector3 sceneOrigin = new Vector3(0, 0, 0);
             Vector3 cubeSize = new Vector3(8.0f * GTEScaling, 8.0f * GTEScaling, 8.0f * GTEScaling);
             Gizmos.color = Color.red;
             Gizmos.DrawWireCube(sceneOrigin, cubeSize);
-
         }
 
     }

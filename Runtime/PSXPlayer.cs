@@ -9,22 +9,22 @@ namespace SplashEdit.RuntimeCode
         public float PlayerHeight;
 
         [HideInInspector]
-        public Vector3 camPoint;
-        float maxDistance = 1000f;
+        public Vector3 CamPoint;
+        private readonly float maxDistance = 1000f;
 
         public void FindNavmesh()
         {
             NavMeshHit hit;
             if (NavMesh.SamplePosition(transform.position, out hit, maxDistance, NavMesh.AllAreas))
             {
-                camPoint = hit.position + new Vector3(0, PlayerHeight, 0);
+                CamPoint = hit.position + new Vector3(0, PlayerHeight, 0);
             }
         }
         void OnDrawGizmos()
         {
             FindNavmesh();
             Gizmos.color = Color.red;
-            Gizmos.DrawSphere(camPoint, 0.2f);
+            Gizmos.DrawSphere(CamPoint, 0.2f);
         }
     }
 }
