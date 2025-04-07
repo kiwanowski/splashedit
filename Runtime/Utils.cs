@@ -307,6 +307,8 @@ namespace SplashEdit.RuntimeCode
 
     public static class Utils
     {
+        private static int MaxTextureSize => 256;
+
         public static (Rect, Rect) BufferForResolution(Vector2 selectedResolution, bool verticalLayout, Vector2 offset = default)
         {
             if (offset == default)
@@ -330,8 +332,28 @@ namespace SplashEdit.RuntimeCode
             };
         }
 
-
         public static byte ColorUnityToPSX(float v) => (byte)(Mathf.Clamp(v * 255, 0, 255));
+
+        public static void SetTextureImporterFormat(Texture2D texture, bool isReadable)
+        {
+            if (texture == null)
+            {
+                return;
+            }
+            string assetPath = AssetDatabase.GetAssetPath(texture);
+            var tImporter = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+            if (tImporter != null)
+            {
+                if (tImporter.maxTextureSize > MaxTextureSize)
+                {
+                    tImporter.maxTextureSize = MaxTextureSize;
+                }
+                tImporter.isReadable = isReadable;
+
+                AssetDatabase.ImportAsset(assetPath);
+                AssetDatabase.Refresh();
+            }
+        }
     }
 
 }
