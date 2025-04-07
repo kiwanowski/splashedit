@@ -56,11 +56,6 @@ namespace SplashEdit.RuntimeCode
                 _playerHeight = player.PlayerHeight;
                 _playerRot = player.transform.rotation;
             }
-            else
-            {
-                Debug.LogError("Can't export a scene without a Player created");
-                return;
-            }
 
             ExportFile();
         }
