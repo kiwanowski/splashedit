@@ -65,7 +65,6 @@ Check the following:
 **Texture Requirements**:
 - There is no automatic downscaling so you must scale your textures in advance.
 - All textures must be in powers of two ``(64x64, 128x128, 256x256)`` with a maximum size of ``256x256`` being a full PS1 texture sheet.
-- Remember to mark your texture in Unity as ``Read/Write`` or you will get an error upon exporting.
 
 ## Current Features:
 **Automatic Scene Exporting**:\
@@ -88,6 +87,7 @@ Allows you to walk around in your scene or view it from different perspectives. 
 - Access the VRAM Editor with Unity's **Window** context menu.
 - Setup the framebuffer locations and preview texture packing.
 - Click on **Save Settings** in the VRAM Editor to inform the GameObject with **PSX Scene Exporter** component where to pack the textures.
+- **Important:** The current psxsplash code expects dual-buffered 320x240 vertical vram buffers.
 - When you click **Pack Textures** in the VRAM Editor, a file selection dialog will appear.
 - Selecting a file will save only the VRAM data. If you do not wish to save the VRAM, simply close the dialog. This is more for debugging the layout of graphics. For a complete scene export (including VRAM), use the **PSX Scene Exporter** component attached to your GameObject that contains it.
 
