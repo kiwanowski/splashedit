@@ -19,7 +19,7 @@ Get the following:
 - Nicolas Noble's PSX Dev Extension for PS1 Development (Which includes a panel for PS1 templates and tools to build your project)
 - A real PS1 or emulator (PCSX-Redux, Duckstation, etc.) to test your project
 
-As far as models are concerend, any modeling program will do as long as you can import the file into Unity (and subsequently exported to the ``SplashPack`` binary format).
+As far as models are concerned, any modeling program will do as long as you can import the file into Unity (and subsequently exported to the ``SplashPack`` binary format).
 FBX is a very common model file format used for skinned meshes with animations. I do hope to implement this myself (unless someone else beats me to it).
 
 Rather than having to git clone this repository to your machine, you can install it directly from within Unity:
