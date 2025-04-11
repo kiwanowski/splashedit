@@ -31,8 +31,7 @@ Rather than having to git clone this repository to your machine, you can install
 
 	Click the + button in the upper left corner and select **"Add Package From Git URL"**.
 
-Enter the Git URL for ``SplashEdit``: `https://github.com/psxsplash/splashedit.git`. Alternatively, if you want to install a different branch of ``SplashEdit``, such as ``lua``, you can use: `https://github.com/psxsplash/splashedit.git#lua"`.
-
+Enter the Git URL for ``SplashEdit``: `https://github.com/psxsplash/splashedit.git`. Alternatively, if you want to install a different branch of ``SplashEdit``, such as ``lua``, you can use: `https://github.com/psxsplash/splashedit.git#lua`.
 For more information on using Git dependencies, you can take a look at [Unity's official documentation](https://docs.unity3d.com/6000.0/Documentation/Manual/upm-git.html).
 
 ## Helpful Videos:
