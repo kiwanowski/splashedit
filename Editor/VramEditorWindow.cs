@@ -113,10 +113,15 @@ namespace SplashEdit.EditorCode
 
             // Retrieve all PSXObjectExporter objects and create their PSX textures.
             PSXObjectExporter[] objects = FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
-            foreach (PSXObjectExporter exp in objects)
+            for (int i = 0; i < objects.Length; i++)
             {
+
+                EditorUtility.DisplayProgressBar($"{nameof(VRAMEditorWindow)}", $"Export {nameof(PSXObjectExporter)}", ((float)i) / objects.Length);
+                PSXObjectExporter exp = objects[i];
                 exp.CreatePSXTextures2D();
             }
+
+            EditorUtility.ClearProgressBar();
 
             // Define framebuffer regions based on selected resolution and layout.
             (Rect buffer1, Rect buffer2) = Utils.BufferForResolution(selectedResolution, verticalLayout);
@@ -157,6 +162,7 @@ namespace SplashEdit.EditorCode
                     }
                 }
             }
+
         }
 
         private void OnGUI()
