@@ -342,16 +342,24 @@ namespace SplashEdit.RuntimeCode
             }
             string assetPath = AssetDatabase.GetAssetPath(texture);
             var tImporter = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+            bool needReimport = false;
             if (tImporter != null)
             {
                 if (tImporter.maxTextureSize > MaxTextureSize)
                 {
                     tImporter.maxTextureSize = MaxTextureSize;
+                    needReimport = true;
                 }
-                tImporter.isReadable = isReadable;
-
-                AssetDatabase.ImportAsset(assetPath);
-                AssetDatabase.Refresh();
+                if (tImporter.isReadable != isReadable)
+                {
+                    tImporter.isReadable = isReadable;
+                    needReimport = true;
+                }
+                if (needReimport)
+                {
+                    AssetDatabase.ImportAsset(assetPath);
+                    AssetDatabase.Refresh();
+                }
             }
         }
     }

@@ -1,25 +1,28 @@
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.Serialization;
 
 
 namespace SplashEdit.RuntimeCode
 {
     public class PSXPlayer : MonoBehaviour
     {
-        public float PlayerHeight;
+        private const float LookOutDistance = 1000f;
 
-        [HideInInspector]
-        public Vector3 CamPoint;
-        private readonly float maxDistance = 1000f;
+        [FormerlySerializedAs("PlayerHeight")]
+        [SerializeField] private float playerHeight;
+
+        public float PlayerHeight => playerHeight;
+        public Vector3 CamPoint { get; protected set; }
 
         public void FindNavmesh()
         {
-            NavMeshHit hit;
-            if (NavMesh.SamplePosition(transform.position, out hit, maxDistance, NavMesh.AllAreas))
+            if (NavMesh.SamplePosition(transform.position, out NavMeshHit hit, LookOutDistance, NavMesh.AllAreas))
             {
                 CamPoint = hit.position + new Vector3(0, PlayerHeight, 0);
             }
         }
+
         void OnDrawGizmos()
         {
             FindNavmesh();

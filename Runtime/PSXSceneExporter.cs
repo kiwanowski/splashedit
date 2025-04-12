@@ -34,17 +34,23 @@ namespace SplashEdit.RuntimeCode
             _psxData = DataStorage.LoadData(out selectedResolution, out dualBuffering, out verticalLayout, out prohibitedAreas);
 
             _exporters = FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
-            foreach (PSXObjectExporter exp in _exporters)
+            for (int i = 0; i < _exporters.Length; i++)
             {
+                PSXObjectExporter exp = _exporters[i];
+                EditorUtility.DisplayProgressBar($"{nameof(PSXSceneExporter)}", $"Export {nameof(PSXObjectExporter)}", ((float)i)/ _exporters.Length);
                 exp.CreatePSXTextures2D();
                 exp.CreatePSXMesh(GTEScaling);
             }
 
             _navmeshes = FindObjectsByType<PSXNavMesh>(FindObjectsSortMode.None);
-            foreach (PSXNavMesh navmesh in _navmeshes)
+            for (int i = 0; i < _navmeshes.Length; i++)
             {
+                PSXNavMesh navmesh = _navmeshes[i];
+                EditorUtility.DisplayProgressBar($"{nameof(PSXSceneExporter)}", $"Export {nameof(PSXNavMesh)}", ((float)i) / _navmeshes.Length);
                 navmesh.CreateNavmesh(GTEScaling);
             }
+
+            EditorUtility.ClearProgressBar();
 
             PackTextures();
 
