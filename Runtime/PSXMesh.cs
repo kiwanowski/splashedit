@@ -40,6 +40,7 @@ namespace SplashEdit.RuntimeCode
     {
         public List<Tri> Triangles;
 
+
         private static Vector3[] RecalculateSmoothNormals(Mesh mesh)
         {
             Vector3[] normals = new Vector3[mesh.vertexCount];
@@ -89,6 +90,8 @@ namespace SplashEdit.RuntimeCode
             // Get materials and mesh.
             Material[] materials = renderer.sharedMaterials;
             Mesh mesh = renderer.GetComponent<MeshFilter>().sharedMesh;
+            
+            bool uvWarning = false;
 
             // Iterate over each submesh.
             for (int submeshIndex = 0; submeshIndex < materials.Length; submeshIndex++)
@@ -147,9 +150,20 @@ namespace SplashEdit.RuntimeCode
                         (vid1, vid2) = (vid2, vid1);
                     }
 
+                    // Set uvWarning to true if uv cooordinates are outside the range [0, 1].
+                    if (uv[vid0].x < 0 || uv[vid0].y < 0 || uv[vid1].x < 0 || uv[vid1].y < 0 || uv[vid2].x < 0 || uv[vid2].y < 0)
+                        uvWarning = true;
+                    if (uv[vid0].x > 1 || uv[vid0].y > 1 || uv[vid1].x > 1 || uv[vid1].y > 1 || uv[vid2].x > 1 || uv[vid2].y > 1)
+                        uvWarning = true;
+
                     // Add the constructed triangle to the mesh.
                     psxMesh.Triangles.Add(new Tri { v0 = convertData(vid0), v1 = convertData(vid1), v2 = convertData(vid2), Texture = psxTexture });
                 }
+            }
+
+            if(uvWarning)
+            {
+                Debug.LogWarning($"UV coordinates on mesh {mesh.name} are outside the range [0, 1]. Texture repeat DOES NOT WORK right now. You may have broken textures.");
             }
 
             return psxMesh;
@@ -183,6 +197,9 @@ namespace SplashEdit.RuntimeCode
                 nz = PSXTrig.ConvertCoordinateToPSX(normal.z),
 
                 // Map UV coordinates to a byte range after scaling based on texture dimensions.
+
+
+
                 u = (byte)Mathf.Clamp(uv.x * (width - 1), 0, 255),
                 v = (byte)Mathf.Clamp((1.0f - uv.y) * (height - 1), 0, 255),
 
