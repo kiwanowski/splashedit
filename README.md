@@ -42,6 +42,8 @@ Both Nicolas and Bandwidth have videos on setting up the PSX Dev Extension in Vi
 
 [Setting up a Scene in Unity 6 for SplashEdit.](https://youtu.be/1JJFYptDTk0)
 
+[Tips for Scene creation.](https://zhamul.itch.io/sauna/devlog/936240/using-psxsplashedit-to-craft-a-scene-for-playstation)
+
 ## PSX Components:
 
 There are currently four custom Unity components for exporting your scenes to the PS1. These include:
