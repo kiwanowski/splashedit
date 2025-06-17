@@ -1,7 +1,6 @@
 #
 # Auto Generated
 #
-
 # Other
 *.pdf filter=lfs diff=lfs merge=lfs -text
 # Unity Binary Assets
@@ -70,18 +69,15 @@
 *.wmv filter=lfs diff=lfs merge=lfs -text
 # Unity-Specific
 * text=auto
-
 # Some assets such as lighting data, nav meshes, etc will always be binary,
 # as will anything with [PreferBinarySerialization]
 # (Even if you force it to text mode serialization)
 # Meaning autoCRLF on git will fuck up your project.
 *.asset auto
 TimeManager.asset -text
-
 #
 # The following should be text to allow git merges
 #
-
 *.anim text
 *.controller text
 *.mat text
@@ -92,5 +88,3 @@ TimeManager.asset -text
 *.unity text
 *.preset text
 *.lfs_test filter=lfs diff=lfs merge=lfs -text
-
-
