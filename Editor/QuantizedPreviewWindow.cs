@@ -13,11 +13,10 @@ namespace SplashEdit.EditorCode
         private Texture2D quantizedTexture;
         private Texture2D vramTexture; // VRAM representation of the texture
         private List<VRAMPixel> clut; // Color Lookup Table (CLUT), stored as a 1D list
-        private ushort[] indexedPixelData; // Indexed pixel data for VRAM storage
         private PSXBPP bpp = PSXBPP.TEX_4BIT;
         private readonly int previewSize = 256;
 
-        [MenuItem("Window/Quantized Preview")]
+        [MenuItem("PlayStation 1/Quantized Preview")]
         public static void ShowWindow()
         {
             // Creates and displays the window
@@ -27,19 +26,25 @@ namespace SplashEdit.EditorCode
 
         private void OnGUI()
         {
-            GUILayout.Label("Quantized Preview", EditorStyles.boldLabel);
+            GUILayout.Label("Quantized Preview", PSXEditorStyles.WindowHeader);
 
             // Texture input field
+            PSXEditorStyles.BeginCard();
             originalTexture = (Texture2D)EditorGUILayout.ObjectField("Original Texture", originalTexture, typeof(Texture2D), false);
 
             // Dropdown for bit depth selection
             bpp = (PSXBPP)EditorGUILayout.EnumPopup("Bit Depth", bpp);
 
+            EditorGUILayout.Space(4);
+
             // Button to generate the quantized preview
-            if (GUILayout.Button("Generate Quantized Preview") && originalTexture != null)
+            if (GUILayout.Button("Generate Quantized Preview", PSXEditorStyles.PrimaryButton, GUILayout.Height(26)) && originalTexture != null)
             {
                 GenerateQuantizedPreview();
             }
+            PSXEditorStyles.EndCard();
+
+            PSXEditorStyles.DrawSeparator(4, 4);
 
             GUILayout.BeginHorizontal();
 
@@ -47,8 +52,8 @@ namespace SplashEdit.EditorCode
             if (originalTexture != null)
             {
                 GUILayout.BeginVertical();
-                GUILayout.Label("Original Texture");
-                DrawTexturePreview(originalTexture, previewSize, false);
+                GUILayout.Label("Original Texture", PSXEditorStyles.CardHeaderStyle);
+                DrawTexturePreview(originalTexture, previewSize);
                 GUILayout.EndVertical();
             }
 
@@ -56,7 +61,7 @@ namespace SplashEdit.EditorCode
             if (vramTexture != null)
             {
                 GUILayout.BeginVertical();
-                GUILayout.Label("VRAM View (Indexed Data as 16bpp)");
+                GUILayout.Label("VRAM View (Indexed Data as 16bpp)", PSXEditorStyles.CardHeaderStyle);
                 DrawTexturePreview(vramTexture, previewSize);
                 GUILayout.EndVertical();
             }
@@ -65,7 +70,7 @@ namespace SplashEdit.EditorCode
             if (quantizedTexture != null)
             {
                 GUILayout.BeginVertical();
-                GUILayout.Label("Quantized Texture");
+                GUILayout.Label("Quantized Texture", PSXEditorStyles.CardHeaderStyle);
                 DrawTexturePreview(quantizedTexture, previewSize);
                 GUILayout.EndVertical();
             }
@@ -75,37 +80,17 @@ namespace SplashEdit.EditorCode
             // Display the Color Lookup Table (CLUT)
             if (clut != null)
             {
-                GUILayout.Label("Color Lookup Table (CLUT)");
+                PSXEditorStyles.DrawSeparator(4, 4);
+                GUILayout.Label("Color Lookup Table (CLUT)", PSXEditorStyles.SectionHeader);
                 DrawCLUT();
             }
 
-            GUILayout.Space(10);
-
-            // Export indexed pixel data
-            if (indexedPixelData != null)
-            {
-                if (GUILayout.Button("Export texture data"))
-                {
-                    string path = EditorUtility.SaveFilePanel("Save texture data", "", "pixel_data", "bin");
-
-                    if (!string.IsNullOrEmpty(path))
-                    {
-                        using (FileStream fileStream = new FileStream(path, FileMode.Create, FileAccess.Write))
-                        using (BinaryWriter writer = new BinaryWriter(fileStream))
-                        {
-                            foreach (ushort value in indexedPixelData)
-                            {
-                                writer.Write(value);
-                            }
-                        }
-                    }
-                }
-            }
+            PSXEditorStyles.DrawSeparator(4, 4);
 
             // Export CLUT data
             if (clut != null)
             {
-                if (GUILayout.Button("Export CLUT data"))
+                if (GUILayout.Button("Export CLUT data", PSXEditorStyles.SecondaryButton, GUILayout.Height(24)))
                 {
                     string path = EditorUtility.SaveFilePanel("Save CLUT data", "", "clut_data", "bin");
 
@@ -139,7 +124,7 @@ namespace SplashEdit.EditorCode
             clut = psxTex.ColorPalette;
         }
 
-        private void DrawTexturePreview(Texture2D texture, int size, bool flipY = true)
+        private void DrawTexturePreview(Texture2D texture, int size)
         {
             // Renders a texture preview within the editor window
             Rect rect = GUILayoutUtility.GetRect(size, size, GUILayout.ExpandWidth(false));

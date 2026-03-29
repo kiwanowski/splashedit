@@ -54,6 +54,10 @@ namespace SplashEdit.RuntimeCode
             _reservedAreas.Add(framebuffers[0]);
             _reservedAreas.Add(framebuffers[1]);
 
+            // Reserve the font column (x=960-1023) — custom fonts and the system font
+            // are placed here by PSXUIExporter, outside the packer's control.
+            _reservedAreas.Add(new Rect(960, 0, 64, VramHeight));
+
             _vramPixels = new VRAMPixel[VramWidth, VramHeight];
         }
 
@@ -64,8 +68,9 @@ namespace SplashEdit.RuntimeCode
         /// Returns the processed objects and the final VRAM pixel array.
         /// </summary>
         /// <param name="objects">Array of PSXObjectExporter objects to process.</param>
+        /// <param name="additionalTextures">Optional standalone textures (e.g. UI images) to include in VRAM packing.</param>
         /// <returns>Tuple containing processed objects, texture atlases, and the VRAM pixel array.</returns>
-        public (PSXObjectExporter[] processedObjects, TextureAtlas[] atlases, VRAMPixel[,] vramPixels) PackTexturesIntoVRAM(PSXObjectExporter[] objects)
+        public (PSXObjectExporter[] processedObjects, TextureAtlas[] atlases, VRAMPixel[,] vramPixels) PackTexturesIntoVRAM(PSXObjectExporter[] objects, List<PSXTexture2D> additionalTextures = null)
         {
             // Gather all textures from all exporters.
             List<PSXTexture2D> allTextures = new List<PSXTexture2D>();
@@ -74,8 +79,15 @@ namespace SplashEdit.RuntimeCode
                 allTextures.AddRange(obj.Textures);
             }
 
-            // List to track unique textures.
+            // Include additional standalone textures (e.g. UI images)
+            if (additionalTextures != null)
+                allTextures.AddRange(additionalTextures);
+
+            // List to track unique textures and their indices
             List<PSXTexture2D> uniqueTextures = new List<PSXTexture2D>();
+            Dictionary<(int, PSXBPP), int> textureToIndexMap = new Dictionary<(int, PSXBPP), int>();
+            // Track duplicates so we can propagate packing data after placement
+            List<(PSXTexture2D duplicate, int uniqueIndex)> duplicates = new List<(PSXTexture2D, int)>();
 
             // Group textures by bit depth (highest first).
             var texturesByBitDepth = allTextures
@@ -101,10 +113,13 @@ namespace SplashEdit.RuntimeCode
                 // Process each texture in descending order of area.
                 foreach (var texture in group.OrderByDescending(tex => tex.QuantizedWidth * tex.Height))
                 {
-                    // Remove duplicate textures
-                    if (uniqueTextures.Any(tex => tex.OriginalTexture.GetInstanceID() == texture.OriginalTexture.GetInstanceID() && tex.BitDepth == texture.BitDepth))
+                    var textureKey = (texture.OriginalTexture.GetInstanceID(), texture.BitDepth);
+
+                    // Check if we've already processed this texture
+                    if (textureToIndexMap.TryGetValue(textureKey, out int existingIndex))
                     {
-                        // Skip packing this texture – it will be replaced later.
+                        // This texture is a duplicate, skip packing but track for later fixup
+                        duplicates.Add((texture, existingIndex));
                         continue;
                     }
 
@@ -120,20 +135,64 @@ namespace SplashEdit.RuntimeCode
                             continue;
                         }
                     }
+
+                    // Add to unique textures and map
+                    int newIndex = uniqueTextures.Count;
                     uniqueTextures.Add(texture);
+                    textureToIndexMap[textureKey] = newIndex;
                 }
             }
 
-            // Now update every exporter so that duplicate textures reference the unique instance.
+            // Now update every exporter and their meshes to use the correct texture indices
             foreach (var obj in objects)
             {
+                // Create a mapping from old texture indices to new indices for this object
+                Dictionary<int, int> oldToNewIndexMap = new Dictionary<int, int>();
+                List<PSXTexture2D> newTextures = new List<PSXTexture2D>();
+
                 for (int i = 0; i < obj.Textures.Count; i++)
                 {
-                    var unique = uniqueTextures.FirstOrDefault(tex => tex.OriginalTexture.GetInstanceID() == obj.Textures[i].OriginalTexture.GetInstanceID() &&
-                                                                      tex.BitDepth == obj.Textures[i].BitDepth);
-                    if (unique != null)
+                    var textureKey = (obj.Textures[i].OriginalTexture.GetInstanceID(), obj.Textures[i].BitDepth);
+                    if (textureToIndexMap.TryGetValue(textureKey, out int newIndex))
                     {
-                        obj.Textures[i] = unique;
+                        oldToNewIndexMap[i] = newIndex;
+
+                        // Only add to new textures list if not already present
+                        var texture = uniqueTextures[newIndex];
+                        if (!newTextures.Contains(texture))
+                        {
+                            newTextures.Add(texture);
+                        }
+                    }
+                }
+
+                // Replace the exporter's texture list with the deduplicated list
+                obj.Textures = newTextures;
+
+                // Update all triangles in the mesh to use the new texture indices
+                if (obj.Mesh != null && obj.Mesh.Triangles != null)
+                {
+                    for (int i = 0; i < obj.Mesh.Triangles.Count; i++)
+                    {
+                        var tri = obj.Mesh.Triangles[i];
+                        if (oldToNewIndexMap.TryGetValue(tri.TextureIndex, out int newGlobalIndex))
+                        {
+                            // Find the index in the new texture list
+                            var texture = uniqueTextures[newGlobalIndex];
+                            int finalIndex = newTextures.IndexOf(texture);
+
+                            // Create a new Tri with the updated TextureIndex
+                            var updatedTri = new Tri
+                            {
+                                v0 = tri.v0,
+                                v1 = tri.v1,
+                                v2 = tri.v2,
+                                TextureIndex = finalIndex
+                            };
+
+                            // Replace the tri in the list
+                            obj.Mesh.Triangles[i] = updatedTri;
+                        }
                     }
                 }
             }
@@ -144,6 +203,21 @@ namespace SplashEdit.RuntimeCode
             AllocateCLUTs();
             // Build the final VRAM pixel array from placed textures and CLUTs.
             BuildVram();
+
+            // Propagate packing coordinates to duplicate textures (e.g. UI images
+            // sharing the same source texture as a 3D object). Without this, the
+            // duplicate's PackingX/Y/TexpageX/Y/ClutPackingX/Y stay at zero.
+            foreach (var (dup, idx) in duplicates)
+            {
+                var unique = uniqueTextures[idx];
+                dup.PackingX = unique.PackingX;
+                dup.PackingY = unique.PackingY;
+                dup.TexpageX = unique.TexpageX;
+                dup.TexpageY = unique.TexpageY;
+                dup.ClutPackingX = unique.ClutPackingX;
+                dup.ClutPackingY = unique.ClutPackingY;
+            }
+
             return (objects, _finalizedAtlases.ToArray(), _vramPixels);
         }
 
@@ -204,7 +278,6 @@ namespace SplashEdit.RuntimeCode
                                     atlas.PositionY = y;
                                     _finalizedAtlases.Add(atlas);
                                     placed = true;
-                                    Debug.Log($"Placed an atlas at: {x},{y}");
                                     break;
                                 }
                             }
@@ -248,7 +321,7 @@ namespace SplashEdit.RuntimeCode
                 // Iterate over possible CLUT positions in VRAM.
                 for (ushort x = 0; x < VramWidth; x += 16)
                 {
-                    for (ushort y = 0; y <= VramHeight; y++)
+                    for (ushort y = 0; y < VramHeight; y++)
                     {
                         var candidate = new Rect(x, y, clutWidth, clutHeight);
                         if (IsPlacementValid(candidate))
@@ -294,9 +367,11 @@ namespace SplashEdit.RuntimeCode
                     // For non-16-bit textures, copy the color palette into VRAM.
                     if (texture.BitDepth != PSXBPP.TEX_16BIT)
                     {
+                        // ClutPackingX is pre-divided by 16, multiply back for VRAM pixel position
+                        int clutPixelX = texture.ClutPackingX * 16;
                         for (int x = 0; x < texture.ColorPalette.Count; x++)
                         {
-                            _vramPixels[x + texture.ClutPackingX, texture.ClutPackingY] = texture.ColorPalette[x];
+                            _vramPixels[clutPixelX + x, texture.ClutPackingY] = texture.ColorPalette[x];
                         }
                     }
                 }

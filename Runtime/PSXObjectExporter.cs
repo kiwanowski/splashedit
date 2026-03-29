@@ -1,120 +1,99 @@
 using System.Collections.Generic;
+using SplashEdit.RuntimeCode;
 using UnityEngine;
 using UnityEngine.Serialization;
 
 namespace SplashEdit.RuntimeCode
 {
-    [RequireComponent(typeof(Renderer))]
-    public class PSXObjectExporter : MonoBehaviour
+    public enum PSXCollisionType
     {
-        public List<PSXTexture2D> Textures { get; set; } = new List<PSXTexture2D>(); // Stores the converted PlayStation-style texture
-        public PSXMesh Mesh { get; set; } // Stores the converted PlayStation-style mesh
-        [Header("Export Settings")]
+        None = 0,
+        Static = 1,
+        Dynamic = 2
+    }
+
+    [RequireComponent(typeof(MeshFilter))]
+    [RequireComponent(typeof(MeshRenderer))]
+    [Icon("Packages/net.psxsplash.splashedit/Icons/PSXObjectExporter.png")]
+    public class PSXObjectExporter : MonoBehaviour, IPSXExportable
+    {
+        public LuaFile LuaFile => luaFile;
+
+        [FormerlySerializedAs("IsActive")]
+        [SerializeField] private bool isActive = true;
+        public bool IsActive => isActive;
+
+        public List<PSXTexture2D> Textures { get; set; } = new List<PSXTexture2D>();
+        public PSXMesh Mesh { get; protected set; }
+
         [FormerlySerializedAs("BitDepth")]
-        [SerializeField] private PSXBPP bitDepth = PSXBPP.TEX_8BIT; // Defines the bit depth of the texture (e.g., 4BPP, 8BPP)
-        [Header("Gizmo Settings")]
-        [FormerlySerializedAs("PreviewNormals")]
-        [SerializeField] private bool previewNormals = false;
-        [SerializeField] private float normalPreviewLength = 0.5f; // Length of the normal lines
+        [SerializeField] private PSXBPP bitDepth = PSXBPP.TEX_8BIT;
+        [SerializeField] private LuaFile luaFile;
+
+        [FormerlySerializedAs("collisionType")]
+        [SerializeField] private PSXCollisionType collisionType = PSXCollisionType.None;
+
+        public PSXBPP BitDepth => bitDepth;
+        public PSXCollisionType CollisionType => collisionType;
 
         private readonly Dictionary<(int, PSXBPP), PSXTexture2D> cache = new();
 
-        private void OnDrawGizmos()
-        {
-            if (previewNormals)
-            {
-                MeshFilter filter = GetComponent<MeshFilter>();
-
-                if (filter != null)
-                {
-                    Mesh mesh = filter.sharedMesh;
-                    Vector3[] vertices = mesh.vertices;
-                    Vector3[] normals = mesh.normals;
-
-                    Gizmos.color = Color.green; // Normal color
-
-                    for (int i = 0; i < vertices.Length; i++)
-                    {
-                        Vector3 worldVertex = transform.TransformPoint(vertices[i]); // Convert to world space
-                        Vector3 worldNormal = transform.TransformDirection(normals[i]); // Transform normal to world space
-
-                        Gizmos.DrawLine(worldVertex, worldVertex + worldNormal * normalPreviewLength);
-                    }
-                }
-
-            }
-        }
-
-
-        /// <summary>
-        /// Converts the object's material texture into a PlayStation-compatible texture.
-        /// </summary>
-        /// 
         public void CreatePSXTextures2D()
         {
             Renderer renderer = GetComponent<Renderer>();
             Textures.Clear();
-            if (renderer != null)
+            if (renderer == null) return;
+
+            Material[] materials = renderer.sharedMaterials;
+            foreach (Material mat in materials)
             {
-                Material[] materials = renderer.sharedMaterials;
+                if (mat == null || mat.mainTexture == null) continue;
 
-                foreach (Material mat in materials)
+                Texture mainTexture = mat.mainTexture;
+                Texture2D tex2D = mainTexture is Texture2D existing
+                    ? existing
+                    : ConvertToTexture2D(mainTexture);
+
+                if (tex2D == null) continue;
+
+                if (cache.TryGetValue((tex2D.GetInstanceID(), bitDepth), out var cached))
                 {
-                    if (mat != null && mat.mainTexture != null)
-                    {
-                        Texture mainTexture = mat.mainTexture;
-                        Texture2D tex2D = null;
-
-                        // Check if it's already a Texture2D
-                        if (mainTexture is Texture2D existingTex2D)
-                        {
-                            tex2D = existingTex2D;
-                        }
-                        else
-                        {
-                            // If not a Texture2D, try to convert
-                            tex2D = ConvertToTexture2D(mainTexture);
-                        }
-
-                        if (tex2D != null)
-                        {
-                            PSXTexture2D tex;
-                            if (cache.ContainsKey((tex2D.GetInstanceID(), bitDepth)))
-                            {
-                                tex = cache[(tex2D.GetInstanceID(), bitDepth)];
-                            }
-                            else
-                            {
-                                tex = PSXTexture2D.CreateFromTexture2D(tex2D, bitDepth);
-                                tex.OriginalTexture = tex2D; // Store reference to the original texture
-                                cache.Add((tex2D.GetInstanceID(), bitDepth), tex);
-                            }
-                            Textures.Add(tex);
-                        }
-                    }
+                    Textures.Add(cached);
+                }
+                else
+                {
+                    var tex = PSXTexture2D.CreateFromTexture2D(tex2D, bitDepth);
+                    tex.OriginalTexture = tex2D;
+                    cache.Add((tex2D.GetInstanceID(), bitDepth), tex);
+                    Textures.Add(tex);
                 }
             }
         }
 
-        private Texture2D ConvertToTexture2D(Texture texture)
+        private static Texture2D ConvertToTexture2D(Texture src)
         {
-            // Create a new Texture2D with the same dimensions and format
-            Texture2D texture2D = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, false);
+            Texture2D texture2D = new Texture2D(src.width, src.height, TextureFormat.RGBA32, false);
 
-            // Read the texture pixels
             RenderTexture currentActiveRT = RenderTexture.active;
-            RenderTexture.active = texture as RenderTexture;
+            RenderTexture.active = src as RenderTexture;
 
-            texture2D.ReadPixels(new Rect(0, 0, texture.width, texture.height), 0, 0);
+            texture2D.ReadPixels(new Rect(0, 0, src.width, src.height), 0, 0);
             texture2D.Apply();
 
             RenderTexture.active = currentActiveRT;
 
             return texture2D;
         }
-        /// <summary>
-        /// Converts the object's mesh into a PlayStation-compatible mesh.
-        /// </summary>
+
+        public PSXTexture2D GetTexture(int index)
+        {
+            if (index >= 0 && index < Textures.Count)
+            {
+                return Textures[index];
+            }
+            return null;
+        }
+
         public void CreatePSXMesh(float GTEScaling)
         {
             Renderer renderer = GetComponent<Renderer>();

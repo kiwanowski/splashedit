@@ -1,10 +1,13 @@
 {
-    "name": "net.psxplash.splashedit.Editor",
+    "name": "net.psxsplash.splashedit.Editor",
     "rootNamespace": "",
     "references": [
-        "net.psxsplash.splashedit.Runtime"
+        "net.psxsplash.splashedit.Runtime",
+        "Unity.AI.Navigation"
     ],
-    "includePlatforms": [],
+    "includePlatforms": [
+        "Editor"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

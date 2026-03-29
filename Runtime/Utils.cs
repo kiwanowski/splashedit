@@ -1,11 +1,13 @@
+#if UNITY_EDITOR
 using UnityEditor;
+#endif
 using System.Collections.Generic;
 using UnityEngine;
 using System.Linq;
 
 namespace SplashEdit.RuntimeCode
 {
-
+#if UNITY_EDITOR
     public static class DataStorage
     {
         private static readonly string psxDataPath = "Assets/PSXData.asset";
@@ -54,6 +56,7 @@ namespace SplashEdit.RuntimeCode
             }
         }
     }
+#endif
 
     /// <summary>
     /// Represents a prohibited area in PlayStation 2D VRAM where textures should not be packed.
@@ -101,15 +104,18 @@ namespace SplashEdit.RuntimeCode
     public static class PSXTrig
     {
         /// <summary>
-        /// Converts a floating-point coordinate to a PSX-compatible 3.12 fixed-point format.
-        /// The value is clamped to the range [-4, 3.999] and scaled by the provided GTEScaling factor.
+        /// Converts a floating-point coordinate to a PSX-compatible 4.12 fixed-point format (int16).
+        /// The value is divided by GTEScaling, then scaled to 4.12 fixed-point and clamped to int16 range.
+        /// Usable range: [-8.0, ~8.0) in GTE units (i.e. [-8*GTEScaling, 8*GTEScaling) in world units).
+        /// Use this for mesh vertex positions (local space) and other data that fits in int16.
         /// </summary>
-        /// <param name="value">The coordinate value to convert.</param>
-        /// <param name="GTEScaling">A scaling factor for the value (default is 1.0f).</param>
-        /// <returns>The converted coordinate in 3.12 fixed-point format.</returns>
+        /// <param name="value">The coordinate value in world units.</param>
+        /// <param name="GTEScaling">World-to-GTE scaling factor (default 1.0f). Value is divided by this.</param>
+        /// <returns>The converted coordinate in 4.12 fixed-point format as a 16-bit signed integer.</returns>
         public static short ConvertCoordinateToPSX(float value, float GTEScaling = 1.0f)
         {
-            return (short)(Mathf.Clamp(value / GTEScaling, -4f, 3.999f) * 4096);
+            int fixedValue = Mathf.RoundToInt((value / GTEScaling) * 4096.0f);
+            return (short)Mathf.Clamp(fixedValue, -32768, 32767);
         }
 
         /// <summary>
@@ -162,15 +168,31 @@ namespace SplashEdit.RuntimeCode
         }
 
         /// <summary>
-        /// Converts a floating-point value to a 3.12 fixed-point format (PSX format).
-        /// The value is scaled by a factor of 4096 and clamped to the range of a signed 16-bit integer.
+        /// Converts a floating-point value to 4.12 fixed-point format (int16).
+        /// Suitable for values in [-8.0, ~8.0) range, such as rotation matrix elements or normals.
         /// </summary>
         /// <param name="value">The floating-point value to convert.</param>
-        /// <returns>The converted value in 3.12 fixed-point format as a 16-bit signed integer.</returns>
+        /// <returns>The converted value in 4.12 fixed-point format as a 16-bit signed integer.</returns>
         public static short ConvertToFixed12(float value)
         {
-            int fixedValue = Mathf.RoundToInt(value * 4096.0f); // Scale to 3.12 format
-            return (short)Mathf.Clamp(fixedValue, -32768, 32767); // Clamp to signed 16-bit
+            int fixedValue = Mathf.RoundToInt(value * 4096.0f);
+            return (short)Mathf.Clamp(fixedValue, -32768, 32767);
+        }
+
+        /// <summary>
+        /// Converts a GTE-space value to 20.12 fixed-point format (int32).
+        /// Use this for world-space positions, collision AABBs, BVH bounds, and any data
+        /// that needs the full int32 range. Caller must divide by GTEScaling BEFORE calling,
+        /// i.e. pass (worldValue / GTEScaling). This matches ConvertCoordinateToPSX's
+        /// coordinate space but returns int32 instead of clamping to int16.
+        /// Usable range: approximately [-524288.0, 524288.0).
+        /// </summary>
+        /// <param name="value">The value to convert (in GTE units, i.e. worldValue / GTEScaling).</param>
+        /// <returns>The converted value in 20.12 fixed-point format as a 32-bit signed integer.</returns>
+        public static int ConvertWorldToFixed12(float value)
+        {
+            long fixedValue = (long)Mathf.RoundToInt(value * 4096.0f);
+            return (int)Mathf.Clamp(fixedValue, int.MinValue, int.MaxValue);
         }
     }
     /// <summary>
@@ -309,6 +331,30 @@ namespace SplashEdit.RuntimeCode
     {
         private static int MaxTextureSize => 256;
 
+        /// <summary>
+        /// If a directory contains exactly one subdirectory (common after archive extraction),
+        /// flatten its contents up one level and remove the nested directory.
+        /// </summary>
+        public static void FixNestedDirectory(string dir)
+        {
+            var subdirs = System.IO.Directory.GetDirectories(dir);
+            if (subdirs.Length == 1)
+            {
+                string nested = subdirs[0];
+                foreach (string file in System.IO.Directory.GetFiles(nested))
+                {
+                    string dest = System.IO.Path.Combine(dir, System.IO.Path.GetFileName(file));
+                    if (!System.IO.File.Exists(dest)) System.IO.File.Move(file, dest);
+                }
+                foreach (string sub in System.IO.Directory.GetDirectories(nested))
+                {
+                    string dest = System.IO.Path.Combine(dir, System.IO.Path.GetFileName(sub));
+                    if (!System.IO.Directory.Exists(dest)) System.IO.Directory.Move(sub, dest);
+                }
+                try { System.IO.Directory.Delete(nested, true); } catch { }
+            }
+        }
+
         public static (Rect, Rect) BufferForResolution(Vector2 selectedResolution, bool verticalLayout, Vector2 offset = default)
         {
             if (offset == default)
@@ -334,6 +380,7 @@ namespace SplashEdit.RuntimeCode
 
         public static byte ColorUnityToPSX(float v) => (byte)(Mathf.Clamp(v * 255, 0, 255));
 
+#if UNITY_EDITOR
         public static void SetTextureImporterFormat(Texture2D texture, bool isReadable)
         {
             if (texture == null)
@@ -362,6 +409,7 @@ namespace SplashEdit.RuntimeCode
                 }
             }
         }
+#endif
     }
 
 }

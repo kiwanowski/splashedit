@@ -1,22 +1,100 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
+using SplashEdit.RuntimeCode;
+#if UNITY_EDITOR
 using UnityEditor;
+#endif
 using UnityEngine;
 
 namespace SplashEdit.RuntimeCode
 {
+    public enum PSXSceneType
+    {
+        Exterior = 0,
+        Interior = 1
+    }
 
     [ExecuteInEditMode]
+    [Icon("Packages/net.psxsplash.splashedit/Icons/PSXSceneExporter.png")]
     public class PSXSceneExporter : MonoBehaviour
     {
+        /// <summary>
+        /// Editor code sets this delegate so the Runtime assembly can convert
+        /// audio without directly referencing the Editor assembly.
+        /// Signature: (AudioClip clip, int sampleRate, bool loop) => byte[] adpcm
+        /// </summary>
+        public static Func<AudioClip, int, bool, byte[]> AudioConvertDelegate;
+
 
         public float GTEScaling = 100.0f;
+        public LuaFile SceneLuaFile;
+        
+        [Header("Fog & Background")]
+        [Tooltip("Background clear color. Also used as the fog blend target when fog is enabled.")]
+        public Color FogColor = new Color(0.5f, 0.5f, 0.6f);
+        [Tooltip("Enable distance fog that blends geometry toward the background color.")]
+        public bool FogEnabled = false;
+        [Tooltip("Fog density (1 = light haze, 10 = pea soup).")]
+        [Range(1, 10)]
+        public int FogDensity = 5;
+        
+        [Header("Scene Type")]
+        [Tooltip("Exterior uses BVH frustum culling. Interior uses room/portal occlusion.")]
+        public PSXSceneType SceneType = PSXSceneType.Exterior;
+
+        [Header("Cutscenes")]
+        [Tooltip("Cutscene clips to include in this scene's splashpack. Only these will be exported.")]
+        public PSXCutsceneClip[] Cutscenes = new PSXCutsceneClip[0];
+
+        [Header("Animations")]
+        [Tooltip("Animation clips to include in this scene's splashpack. Multiple can play simultaneously at runtime.")]
+        public PSXAnimationClip[] Animations = new PSXAnimationClip[0];
+
+        [Header("Loading Screen")]
+        [Tooltip("Optional prefab containing a PSXCanvas to use as a loading screen when loading this scene.\n" +
+                 "The canvas may contain a PSXUIProgressBar named 'loading' which will be automatically\n" +
+                 "updated during scene load. If null, no loading screen is shown.")]
+        public GameObject LoadingScreenPrefab;
 
         private PSXObjectExporter[] _exporters;
         private TextureAtlas[] _atlases;
-        private PSXNavMesh[] _navmeshes;
+
+        // Component arrays
+        private PSXInteractable[] _interactables;
+        private PSXAudioClip[] _audioSources;
+        private PSXTriggerBox[] _triggerBoxes;
+
+        // ── Post-export data for memory analysis ──
+        /// <summary>Texture atlases from the last export (null before first export).</summary>
+        public TextureAtlas[] LastExportAtlases => _atlases;
+        /// <summary>Custom font data from the last export.</summary>
+        public PSXFontData[] LastExportFonts => _fonts;
+        /// <summary>Audio clip ADPCM sizes from the last export.</summary>
+        public long[] LastExportAudioSizes => _lastAudioSizes;
+        private long[] _lastAudioSizes;
+        /// <summary>Total triangle count from the last export.</summary>
+        public int LastExportTriangleCount
+        {
+            get
+            {
+                if (_exporters == null) return 0;
+                int count = 0;
+                foreach (var exp in _exporters)
+                    if (exp.Mesh != null) count += exp.Mesh.Triangles.Count;
+                return count;
+            }
+        }
+        
+        // Phase 4: Nav regions
+        private PSXNavRegionBuilder _navRegionBuilder;
+        
+        // Phase 5: Room/portal system (interior scenes)
+        private PSXRoomBuilder _roomBuilder;
+
+        // Phase 6: UI canvases
+        private PSXCanvasData[] _canvases;
+        private PSXFontData[] _fonts;
 
         private PSXData _psxData;
 
@@ -28,31 +106,71 @@ namespace SplashEdit.RuntimeCode
         private Vector3 _playerPos;
         private Quaternion _playerRot;
         private float _playerHeight;
+        private float _playerRadius;
+        private float _moveSpeed;
+        private float _sprintSpeed;
+        private float _jumpHeight;
+        private float _gravity;
 
+        private BVH _bvh;
+
+        public bool PreviewBVH = true;
+        public bool PreviewRoomsPortals = true;
+
+        public int BVHPreviewDepth = 9999;
+
+        /// <summary>
+        /// Export with a file dialog (legacy workflow).
+        /// </summary>
         public void Export()
         {
+            ExportToPath(null);
+        }
+
+        /// <summary>
+        /// Export to the given file path. If path is null, shows a file dialog.
+        /// Called by the Control Panel pipeline for automated exports.
+        /// </summary>
+        public void ExportToPath(string outputPath)
+        {
+#if UNITY_EDITOR
             _psxData = DataStorage.LoadData(out selectedResolution, out dualBuffering, out verticalLayout, out prohibitedAreas);
 
             _exporters = FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
             for (int i = 0; i < _exporters.Length; i++)
             {
                 PSXObjectExporter exp = _exporters[i];
-                EditorUtility.DisplayProgressBar($"{nameof(PSXSceneExporter)}", $"Export {nameof(PSXObjectExporter)}", ((float)i)/ _exporters.Length);
+                EditorUtility.DisplayProgressBar($"{nameof(PSXSceneExporter)}", $"Export {nameof(PSXObjectExporter)}", ((float)i) / _exporters.Length);
                 exp.CreatePSXTextures2D();
                 exp.CreatePSXMesh(GTEScaling);
             }
+            
+            // Collect components
+            _interactables = FindObjectsByType<PSXInteractable>(FindObjectsSortMode.None);
+            _audioSources = FindObjectsByType<PSXAudioClip>(FindObjectsSortMode.None);
+            _triggerBoxes = FindObjectsByType<PSXTriggerBox>(FindObjectsSortMode.None);
 
-            _navmeshes = FindObjectsByType<PSXNavMesh>(FindObjectsSortMode.None);
-            for (int i = 0; i < _navmeshes.Length; i++)
+            // Collect UI image textures for VRAM packing alongside 3D textures
+            PSXUIImage[] uiImages = FindObjectsByType<PSXUIImage>(FindObjectsSortMode.None);
+            List<PSXTexture2D> uiTextures = new List<PSXTexture2D>();
+            foreach (PSXUIImage img in uiImages)
             {
-                PSXNavMesh navmesh = _navmeshes[i];
-                EditorUtility.DisplayProgressBar($"{nameof(PSXSceneExporter)}", $"Export {nameof(PSXNavMesh)}", ((float)i) / _navmeshes.Length);
-                navmesh.CreateNavmesh(GTEScaling);
+                if (img.SourceTexture != null)
+                {
+                    Utils.SetTextureImporterFormat(img.SourceTexture, true);
+                    PSXTexture2D tex = PSXTexture2D.CreateFromTexture2D(img.SourceTexture, img.BitDepth);
+                    tex.OriginalTexture = img.SourceTexture;
+                    img.PackedTexture = tex;
+                    uiTextures.Add(tex);
+                }
             }
 
             EditorUtility.ClearProgressBar();
 
-            PackTextures();
+            PackTextures(uiTextures);
+
+            // Collect UI canvases after VRAM packing (so PSXUIImage.PackedTexture has valid VRAM coords)
+            _canvases = PSXUIExporter.CollectCanvases(selectedResolution, out _fonts);
 
             PSXPlayer player = FindObjectsByType<PSXPlayer>(FindObjectsSortMode.None).FirstOrDefault();
             if (player != null)
@@ -60,13 +178,70 @@ namespace SplashEdit.RuntimeCode
                 player.FindNavmesh();
                 _playerPos = player.CamPoint;
                 _playerHeight = player.PlayerHeight;
+                _playerRadius = player.PlayerRadius;
+                _moveSpeed = player.MoveSpeed;
+                _sprintSpeed = player.SprintSpeed;
+                _jumpHeight = player.JumpHeight;
+                _gravity = player.Gravity;
                 _playerRot = player.transform.rotation;
             }
 
-            ExportFile();
+            _bvh = new BVH(_exporters.ToList());
+            _bvh.Build();
+
+            // Phase 4+5: Room volumes are needed by BOTH the nav region builder
+            // (for spatial room assignment) and the room builder (for triangle assignment).
+            // Collect them early so both systems use the same room indices.
+            PSXRoom[] rooms = null;
+            PSXPortalLink[] portalLinks = null;
+            if (SceneType == PSXSceneType.Interior)
+            {
+                rooms = FindObjectsByType<PSXRoom>(FindObjectsSortMode.None);
+                portalLinks = FindObjectsByType<PSXPortalLink>(FindObjectsSortMode.None);
+            }
+
+            // Phase 4: Build nav regions
+            _navRegionBuilder = new PSXNavRegionBuilder();
+            _navRegionBuilder.AgentRadius = _playerRadius;
+            _navRegionBuilder.AgentHeight = _playerHeight;
+            if (player != null)
+            {
+                _navRegionBuilder.MaxStepHeight = player.MaxStepHeight;
+                _navRegionBuilder.WalkableSlopeAngle = player.WalkableSlopeAngle;
+                _navRegionBuilder.CellSize = player.NavCellSize;
+                _navRegionBuilder.CellHeight = player.NavCellHeight;
+            }
+            // Pass PSXRoom volumes so nav regions get spatial room assignment
+            // instead of BFS connectivity. This ensures nav region roomIndex
+            // matches the PSXRoomBuilder room indices used by the renderer.
+            if (rooms != null && rooms.Length > 0)
+                _navRegionBuilder.PSXRooms = rooms;
+            _navRegionBuilder.Build(_exporters, _playerPos);
+            if (_navRegionBuilder.RegionCount == 0)
+                Debug.LogWarning("No nav regions! Enable 'Generate Navigation' on your floor meshes.");
+
+            // Phase 5: Build room/portal system (for interior scenes)
+            _roomBuilder = new PSXRoomBuilder();
+            if (SceneType == PSXSceneType.Interior)
+            {
+                if (rooms != null && rooms.Length > 0)
+                {
+                    _roomBuilder.Build(rooms, portalLinks, _exporters, GTEScaling);
+                    if (portalLinks == null || portalLinks.Length == 0)
+                        Debug.LogWarning("Interior scene has rooms but no PSXPortalLink components! " +
+                                         "Place PSXPortalLink objects between rooms for portal culling.");
+                }
+                else
+                {
+                    Debug.LogWarning("Interior scene type but no PSXRoom volumes found! Place PSXRoom components.");
+                }
+            }
+
+            ExportFile(outputPath);
+#endif
         }
 
-        void PackTextures()
+        void PackTextures(List<PSXTexture2D> additionalTextures = null)
         {
             (Rect buffer1, Rect buffer2) = Utils.BufferForResolution(selectedResolution, verticalLayout);
 
@@ -77,337 +252,97 @@ namespace SplashEdit.RuntimeCode
             }
 
             VRAMPacker tp = new VRAMPacker(framebuffers, prohibitedAreas);
-            var packed = tp.PackTexturesIntoVRAM(_exporters);
+            var packed = tp.PackTexturesIntoVRAM(_exporters, additionalTextures);
             _exporters = packed.processedObjects;
             _atlases = packed.atlases;
 
         }
 
-        void ExportFile()
+        void ExportFile(string outputPath = null)
         {
+#if UNITY_EDITOR
+            string path = outputPath;
+            if (string.IsNullOrEmpty(path))
+                path = EditorUtility.SaveFilePanel("Select Output File", "", "output", "bin");
+            if (string.IsNullOrEmpty(path))
+                return;
 
-            string path = EditorUtility.SaveFilePanel("Select Output File", "", "output", "bin");
-            int totalFaces = 0;
-
-            // Lists for mesh data offsets.
-            List<long> meshOffsetPlaceholderPositions = new List<long>();
-            List<long> meshDataOffsets = new List<long>();
-
-            // Lists for atlas data offsets.
-            List<long> atlasOffsetPlaceholderPositions = new List<long>();
-            List<long> atlasDataOffsets = new List<long>();
-
-            // Lists for clut data offsets.
-            List<long> clutOffsetPlaceholderPositions = new List<long>();
-            List<long> clutDataOffsets = new List<long>();
-
-            // Lists for navmesh data offsets.
-            List<long> navmeshOffsetPlaceholderPositions = new List<long>();
-            List<long> navmeshDataOffsets = new List<long>();
-
-            int clutCount = 0;
-
-            // Cluts
-            foreach (TextureAtlas atlas in _atlases)
+            // Convert audio clips to ADPCM (Editor-only, before passing to Runtime writer)
+            AudioClipExport[] audioExports = null;
+            if (_audioSources != null && _audioSources.Length > 0)
             {
-                foreach (var texture in atlas.ContainedTextures)
+                var list = new List<AudioClipExport>();
+                foreach (var src in _audioSources)
                 {
-                    if (texture.ColorPalette != null)
+                    if (src.Clip != null)
                     {
-                        clutCount++;
+                        if (AudioConvertDelegate == null)
+                            throw new InvalidOperationException("AudioConvertDelegate not set. Ensure PSXAudioConverter registers it.");
+                        byte[] adpcm = AudioConvertDelegate(src.Clip, src.SampleRate, src.Loop);
+                        list.Add(new AudioClipExport { adpcmData = adpcm, sampleRate = src.SampleRate, loop = src.Loop, clipName = src.ClipName });
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"Audio source on {src.gameObject.name} has no clip assigned.");
+                        list.Add(new AudioClipExport { adpcmData = null, sampleRate = src.SampleRate, loop = src.Loop, clipName = src.ClipName });
                     }
                 }
+                audioExports = list.ToArray();
             }
 
-            using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
+            // Cache audio sizes for memory analysis
+            if (audioExports != null)
             {
-                // Header
-                writer.Write('S'); // 1 byte                                                                    // 1
-                writer.Write('P'); // 1 byte                                                                    // 2 
-                writer.Write((ushort)1); // 2 bytes - version                                                   // 4
-                writer.Write((ushort)_exporters.Length); // 2 bytes                                             // 6
-                writer.Write((ushort)_navmeshes.Length);                                                        // 8
-                writer.Write((ushort)_atlases.Length); // 2 bytes                                               // 10
-                writer.Write((ushort)clutCount); // 2 bytes                                                     // 12
-                writer.Write((ushort)PSXTrig.ConvertCoordinateToPSX(_playerPos.x, GTEScaling));                 // 14
-                writer.Write((ushort)PSXTrig.ConvertCoordinateToPSX(-_playerPos.y, GTEScaling));                // 16
-                writer.Write((ushort)PSXTrig.ConvertCoordinateToPSX(_playerPos.z, GTEScaling));                 // 18
-
-                writer.Write((ushort)PSXTrig.ConvertToFixed12(_playerRot.eulerAngles.x * Mathf.Deg2Rad));       // 20
-                writer.Write((ushort)PSXTrig.ConvertToFixed12(_playerRot.eulerAngles.y * Mathf.Deg2Rad));       // 22
-                writer.Write((ushort)PSXTrig.ConvertToFixed12(_playerRot.eulerAngles.z * Mathf.Deg2Rad));       // 24
-
-                writer.Write((ushort)PSXTrig.ConvertCoordinateToPSX(_playerHeight, GTEScaling));                // 26
-
-                writer.Write((ushort)0);
-
-                // GameObject section (exporters)
-                foreach (PSXObjectExporter exporter in _exporters)
-                {
-                    // Write placeholder for mesh data offset and record its position.
-                    meshOffsetPlaceholderPositions.Add(writer.BaseStream.Position);
-                    writer.Write((int)0); // 4-byte placeholder for mesh data offset.
-
-                    // Write object's transform
-                    writer.Write((int)PSXTrig.ConvertCoordinateToPSX(exporter.transform.localToWorldMatrix.GetPosition().x, GTEScaling));
-                    writer.Write((int)PSXTrig.ConvertCoordinateToPSX(-exporter.transform.localToWorldMatrix.GetPosition().y, GTEScaling));
-                    writer.Write((int)PSXTrig.ConvertCoordinateToPSX(exporter.transform.localToWorldMatrix.GetPosition().z, GTEScaling));
-                    int[,] rotationMatrix = PSXTrig.ConvertRotationToPSXMatrix(exporter.transform.rotation);
-
-                    writer.Write((int)rotationMatrix[0, 0]);
-                    writer.Write((int)rotationMatrix[0, 1]);
-                    writer.Write((int)rotationMatrix[0, 2]);
-                    writer.Write((int)rotationMatrix[1, 0]);
-                    writer.Write((int)rotationMatrix[1, 1]);
-                    writer.Write((int)rotationMatrix[1, 2]);
-                    writer.Write((int)rotationMatrix[2, 0]);
-                    writer.Write((int)rotationMatrix[2, 1]);
-                    writer.Write((int)rotationMatrix[2, 2]);
-
-                    writer.Write((ushort)exporter.Mesh.Triangles.Count);
-                    writer.Write((ushort)0);
-                }
-
-                // Navmesh metadata section
-                foreach (PSXNavMesh navmesh in _navmeshes)
-                {
-                    // Write placeholder for navmesh raw data offset.
-                    navmeshOffsetPlaceholderPositions.Add(writer.BaseStream.Position);
-                    writer.Write((int)0); // 4-byte placeholder for navmesh data offset.
-
-                    writer.Write((ushort)navmesh.Navmesh.Count);
-                    writer.Write((ushort)0);
-                }
-
-                // Atlas metadata section
-                foreach (TextureAtlas atlas in _atlases)
-                {
-                    // Write placeholder for texture atlas raw data offset.
-                    atlasOffsetPlaceholderPositions.Add(writer.BaseStream.Position);
-                    writer.Write((int)0); // 4-byte placeholder for atlas data offset.
-
-                    writer.Write((ushort)atlas.Width);
-                    writer.Write((ushort)TextureAtlas.Height);
-                    writer.Write((ushort)atlas.PositionX);
-                    writer.Write((ushort)atlas.PositionY);
-                }
-
-                // Cluts
-                foreach (TextureAtlas atlas in _atlases)
-                {
-                    foreach (var texture in atlas.ContainedTextures)
-                    {
-                        if (texture.ColorPalette != null)
-                        {
-                            clutOffsetPlaceholderPositions.Add(writer.BaseStream.Position);
-                            writer.Write((int)0); // 4-byte placeholder for clut data offset.
-                            writer.Write((ushort)texture.ClutPackingX); // 2 bytes
-                            writer.Write((ushort)texture.ClutPackingY); // 2 bytes
-                            writer.Write((ushort)texture.ColorPalette.Count); // 2 bytes
-                            writer.Write((ushort)0); // 2 bytes
-                        }
-                    }
-                }
-
-                // Start of data section
-
-                // Mesh data section: Write mesh data for each exporter.
-                foreach (PSXObjectExporter exporter in _exporters)
-                {
-                    AlignToFourBytes(writer);
-                    // Record the current offset for this exporter's mesh data.
-                    long meshDataOffset = writer.BaseStream.Position;
-                    meshDataOffsets.Add(meshDataOffset);
-
-                    totalFaces += exporter.Mesh.Triangles.Count;
-
-                    void writeVertexPosition(PSXVertex v)
-                    {
-                        writer.Write((short)v.vx);
-                        writer.Write((short)v.vy);
-                        writer.Write((short)v.vz);
-                    }
-                    void writeVertexNormals(PSXVertex v)
-                    {
-                        writer.Write((short)v.nx);
-                        writer.Write((short)v.ny);
-                        writer.Write((short)v.nz);
-                    }
-                    void writeVertexColor(PSXVertex v)
-                    {
-                        writer.Write((byte)v.r);
-                        writer.Write((byte)v.g);
-                        writer.Write((byte)v.b);
-                        writer.Write((byte)0); // padding
-                    }
-                    void writeVertexUV(PSXVertex v, PSXTexture2D t, int expander)
-                    {
-                        writer.Write((byte)(v.u + t.PackingX * expander));
-                        writer.Write((byte)(v.v + t.PackingY));
-                    }
-                    void foreachVertexDo(Tri tri, Action<PSXVertex> action)
-                    {
-                        for (int i = 0; i < tri.Vertexes.Length; i++)
-                        {
-                            action(tri.Vertexes[i]);
-                        }
-                    }
-                    foreach (Tri tri in exporter.Mesh.Triangles)
-                    {
-                        int expander = 16 / ((int)tri.Texture.BitDepth);
-                        // Write vertices coordinates
-                        foreachVertexDo(tri, (v) => writeVertexPosition(v));
-
-                        // Write vertex normals for v0 only
-                        writeVertexNormals(tri.v0);
-
-                        // Write vertex colors with padding
-                        foreachVertexDo(tri, (v) => writeVertexColor(v));
-
-                        // Write UVs for each vertex, adjusting for texture packing
-                        foreachVertexDo(tri, (v) => writeVertexUV(v, tri.Texture, expander));
-
-                        writer.Write((ushort)0); // padding
-
-
-                        TPageAttr tpage = new TPageAttr();
-                        tpage.SetPageX(tri.Texture.TexpageX);
-                        tpage.SetPageY(tri.Texture.TexpageY);
-                        tpage.Set(tri.Texture.BitDepth.ToColorMode());
-                        tpage.SetDithering(true);
-                        writer.Write((ushort)tpage.info);
-                        writer.Write((ushort)tri.Texture.ClutPackingX);
-                        writer.Write((ushort)tri.Texture.ClutPackingY);
-                        writer.Write((ushort)0);
-                    }
-                }
-
-                foreach (PSXNavMesh navmesh in _navmeshes)
-                {
-                    AlignToFourBytes(writer);
-                    long navmeshDataOffset = writer.BaseStream.Position;
-                    navmeshDataOffsets.Add(navmeshDataOffset);
-
-                    foreach (PSXNavMeshTri tri in navmesh.Navmesh)
-                    {
-                        writer.Write((int)tri.v0.vx);
-                        writer.Write((int)tri.v0.vy);
-                        writer.Write((int)tri.v0.vz);
-
-                        writer.Write((int)tri.v1.vx);
-                        writer.Write((int)tri.v1.vy);
-                        writer.Write((int)tri.v1.vz);
-
-                        writer.Write((int)tri.v2.vx);
-                        writer.Write((int)tri.v2.vy);
-                        writer.Write((int)tri.v2.vz);
-                    }
-
-                }
-
-                // Atlas data section: Write raw texture data for each atlas.
-                foreach (TextureAtlas atlas in _atlases)
-                {
-                    AlignToFourBytes(writer);
-                    // Record the current offset for this atlas's data.
-                    long atlasDataOffset = writer.BaseStream.Position;
-                    atlasDataOffsets.Add(atlasDataOffset);
-
-                    // Write the atlas's raw texture data.
-                    for (int y = 0; y < atlas.vramPixels.GetLength(1); y++)
-                    {
-                        for (int x = 0; x < atlas.vramPixels.GetLength(0); x++)
-                        {
-                            writer.Write(atlas.vramPixels[x, y].Pack());
-                        }
-                    }
-                }
-
-                // Clut data section
-                foreach (TextureAtlas atlas in _atlases)
-                {
-                    foreach (var texture in atlas.ContainedTextures)
-                    {
-                        if (texture.ColorPalette != null)
-                        {
-                            AlignToFourBytes(writer);
-                            long clutDataOffset = writer.BaseStream.Position;
-                            clutDataOffsets.Add(clutDataOffset);
-
-                            foreach (VRAMPixel color in texture.ColorPalette)
-                            {
-                                writer.Write((ushort)color.Pack());
-                            }
-                        }
-                    }
-
-                }
-
-                // Backfill the mesh data offsets into the metadata section.
-                if (meshOffsetPlaceholderPositions.Count == meshDataOffsets.Count)
-                {
-                    for (int i = 0; i < meshOffsetPlaceholderPositions.Count; i++)
-                    {
-                        writer.Seek((int)meshOffsetPlaceholderPositions[i], SeekOrigin.Begin);
-                        writer.Write((int)meshDataOffsets[i]);
-                    }
-                }
-                else
-                {
-                    Debug.LogError("Mismatch between metadata mesh offset placeholders and mesh data blocks!");
-                }
-
-                // Backfill the navmesh offsets into the metadata section.
-                if (navmeshOffsetPlaceholderPositions.Count == navmeshDataOffsets.Count)
-                {
-                    for (int i = 0; i < navmeshOffsetPlaceholderPositions.Count; i++)
-                    {
-                        writer.Seek((int)navmeshOffsetPlaceholderPositions[i], SeekOrigin.Begin);
-                        writer.Write((int)navmeshDataOffsets[i]);
-                    }
-                }
-                else
-                {
-                    Debug.LogError("Mismatch between metadata mesh offset placeholders and mesh data blocks!");
-                }
-
-
-                // Backfill the atlas data offsets into the metadata section.
-                if (atlasOffsetPlaceholderPositions.Count == atlasDataOffsets.Count)
-                {
-                    for (int i = 0; i < atlasOffsetPlaceholderPositions.Count; i++)
-                    {
-                        writer.Seek((int)atlasOffsetPlaceholderPositions[i], SeekOrigin.Begin);
-                        writer.Write((int)atlasDataOffsets[i]);
-                    }
-                }
-                else
-                {
-                    Debug.LogError("Mismatch between atlas offset placeholders and atlas data blocks!");
-                }
-
-                // Backfill the clut data offsets into the metadata section.
-                if (clutOffsetPlaceholderPositions.Count == clutDataOffsets.Count)
-                {
-                    for (int i = 0; i < clutOffsetPlaceholderPositions.Count; i++)
-                    {
-                        writer.Seek((int)clutOffsetPlaceholderPositions[i], SeekOrigin.Begin);
-                        writer.Write((int)clutDataOffsets[i]);
-                    }
-                }
-                else
-                {
-                    Debug.LogError("Mismatch between clut offset placeholders and clut data blocks!");
-                }
+                _lastAudioSizes = new long[audioExports.Length];
+                for (int i = 0; i < audioExports.Length; i++)
+                    _lastAudioSizes[i] = audioExports[i].adpcmData != null ? audioExports[i].adpcmData.Length : 0;
             }
-            Debug.Log(totalFaces);
-        }
+            else
+            {
+                _lastAudioSizes = null;
+            }
 
-        void AlignToFourBytes(BinaryWriter writer)
-        {
-            long position = writer.BaseStream.Position;
-            int padding = (int)(4 - (position % 4)) % 4; // Compute needed padding
-            writer.Write(new byte[padding]); // Write zero padding
+            var scene = new PSXSceneWriter.SceneData
+            {
+                exporters = _exporters,
+                atlases = _atlases,
+                interactables = _interactables,
+                audioClips = audioExports,
+                navRegionBuilder = _navRegionBuilder,
+                roomBuilder = _roomBuilder,
+                bvh = _bvh,
+                sceneLuaFile = SceneLuaFile,
+                gteScaling = GTEScaling,
+                playerPos = _playerPos,
+                playerRot = _playerRot,
+                playerHeight = _playerHeight,
+                playerRadius = _playerRadius,
+                moveSpeed = _moveSpeed,
+                sprintSpeed = _sprintSpeed,
+                jumpHeight = _jumpHeight,
+                gravity = _gravity,
+                sceneType = SceneType,
+                fogEnabled = FogEnabled,
+                fogColor = FogColor,
+                fogDensity = FogDensity,
+                cutscenes = Cutscenes,
+                animations = Animations,
+                audioSources = _audioSources,
+                canvases = _canvases,
+                fonts = _fonts,
+                triggerBoxes = _triggerBoxes,
+            };
+
+            PSXSceneWriter.Write(path, in scene, (msg, type) =>
+            {
+                switch (type)
+                {
+                    case LogType.Error:   Debug.LogError(msg);   break;
+                    case LogType.Warning: Debug.LogWarning(msg); break;
+                    default:              Debug.Log(msg);        break;
+                }
+            });
+#endif
         }
 
         void OnDrawGizmos()
@@ -416,6 +351,9 @@ namespace SplashEdit.RuntimeCode
             Vector3 cubeSize = new Vector3(8.0f * GTEScaling, 8.0f * GTEScaling, 8.0f * GTEScaling);
             Gizmos.color = Color.red;
             Gizmos.DrawWireCube(sceneOrigin, cubeSize);
+
+            if (_bvh == null || !PreviewBVH) return;
+            _bvh.DrawGizmos(BVHPreviewDepth);
         }
 
     }

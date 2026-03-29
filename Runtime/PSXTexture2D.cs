@@ -154,6 +154,18 @@ namespace SplashEdit.RuntimeCode
                             G = (ushort)(pixel.g * 31),
                             B = (ushort)(pixel.b * 31)
                         };
+
+                        // PS1: color 0x0000 is transparent. If the source pixel is opaque
+                        // but quantized to pure black, bump to near-black (1,1,1) with bit15
+                        // set so the hardware doesn't treat it as see-through.
+                        if (vramPixel.Pack() == 0x0000 && pixel.a > 0f)
+                        {
+                            vramPixel.R = 1;
+                            vramPixel.G = 1;
+                            vramPixel.B = 1;
+                            vramPixel.SemiTransparent = true;
+                        }
+
                         psxTex.ImageData[x, y] = vramPixel;
                     }
                 }
@@ -169,6 +181,18 @@ namespace SplashEdit.RuntimeCode
             {
                 Color pixel = new Color(color.x, color.y, color.z);
                 VRAMPixel vramPixel = new VRAMPixel { R = (ushort)(pixel.r * 31), G = (ushort)(pixel.g * 31), B = (ushort)(pixel.b * 31) };
+
+                // PS1: palette entry 0x0000 is transparent. Any non-transparent palette
+                // color that quantizes to pure black must be bumped to near-black (1,1,1)
+                // with bit15 set to avoid the hardware treating it as see-through.
+                if (vramPixel.Pack() == 0x0000)
+                {
+                    vramPixel.R = 1;
+                    vramPixel.G = 1;
+                    vramPixel.B = 1;
+                    vramPixel.SemiTransparent = true;
+                }
+
                 psxTex.ColorPalette.Add(vramPixel);
             }
 
@@ -228,9 +252,9 @@ namespace SplashEdit.RuntimeCode
             if (BitDepth == PSXBPP.TEX_16BIT)
             {
 
-                for (int y = 0; y < Width; y++)
+                for (int y = 0; y < Height; y++)
                 {
-                    for (int x = 0; x < Height; x++)
+                    for (int x = 0; x < Width; x++)
                     {
                         tex.SetPixel(x, Height - 1 - y, ImageData[x, y].GetUnityColor());
                     }
@@ -276,16 +300,6 @@ namespace SplashEdit.RuntimeCode
 
             return vramTexture;
 
-        }
-        /// <summary>
-        /// Check if we need to update stored texture
-        /// </summary>
-        /// <param name="bitDepth">new settings for color bit depth</param>
-        /// <param name="texture">new texture</param>
-        /// <returns>return true if sored texture is different from a new one</returns>
-        internal bool NeedUpdate(PSXBPP bitDepth, Texture2D texture)
-        {
-            return BitDepth != bitDepth || texture.GetInstanceID() != texture.GetInstanceID();
         }
     }
 }

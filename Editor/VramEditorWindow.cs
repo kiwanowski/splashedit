@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using SplashEdit.RuntimeCode;
 using Unity.Collections;
@@ -19,25 +18,16 @@ namespace SplashEdit.EditorCode
         private List<ProhibitedArea> prohibitedAreas = new List<ProhibitedArea>();
         private Vector2 scrollPosition;
         private Texture2D vramImage;
-        private Vector2 selectedResolution = new Vector2(320, 240);
-        private bool dualBuffering = true;
-        private bool verticalLayout = true;
+        private static readonly Vector2 selectedResolution = new Vector2(320, 240);
+        private const bool dualBuffering = true;
+        private const bool verticalLayout = true;
         private Color bufferColor1 = new Color(1, 0, 0, 0.5f);
         private Color bufferColor2 = new Color(0, 1, 0, 0.5f);
         private Color prohibitedColor = new Color(1, 0, 0, 0.3f);
         private PSXData _psxData;
+        private PSXFontData[] _cachedFonts;
 
-        private static readonly Vector2[] resolutions =
-        {
-        new Vector2(256, 240), new Vector2(256, 480),
-        new Vector2(320, 240), new Vector2(320, 480),
-        new Vector2(368, 240), new Vector2(368, 480),
-        new Vector2(512, 240), new Vector2(512, 480),
-        new Vector2(640, 240), new Vector2(640, 480)
-        };
-        private static string[] resolutionsStrings => resolutions.Select(c => $"{c.x}x{c.y}").ToArray();
-
-        [MenuItem("Window/VRAM Editor")]
+        [MenuItem("PlayStation 1/VRAM Editor")]
         public static void ShowWindow()
         {
             VRAMEditorWindow window = GetWindow<VRAMEditorWindow>("VRAM Editor");
@@ -57,11 +47,13 @@ namespace SplashEdit.EditorCode
             // Ensure minimum window size is applied.
             this.minSize = MinSize;
 
-            _psxData = DataStorage.LoadData(out selectedResolution, out dualBuffering, out verticalLayout, out prohibitedAreas);
+            Vector2 ignoredRes;
+            bool ignoredDb, ignoredVl;
+            _psxData = DataStorage.LoadData(out ignoredRes, out ignoredDb, out ignoredVl, out prohibitedAreas);
         }
 
         /// <summary>
-        /// Pastes an overlay texture onto a base texture at the specified position.
+        /// Pastes an overlay texture onto a base texture at the specified position.    
         /// </summary>
         public static void PasteTexture(Texture2D baseTexture, Texture2D overlayTexture, int posX, int posY)
         {
@@ -144,65 +136,75 @@ namespace SplashEdit.EditorCode
                     vramImage.SetPixel(x, VramHeight - y - 1, packed.vramPixels[x, y].GetUnityColor());
                 }
             }
-            vramImage.Apply();
 
-            // Prompt the user to select a file location and save the VRAM data.
-            string path = EditorUtility.SaveFilePanel("Select Output File", "", "output", "bin");
-
-            if (path != string.Empty)
+            // Overlay custom font textures into the VRAM preview.
+            // Fonts live at x=960 (4bpp = 64 VRAM hwords wide), stacking from y=0.
+            PSXFontData[] fonts;
+            PSXUIExporter.CollectCanvases(selectedResolution, out fonts);
+            _cachedFonts = fonts;
+            if (fonts != null && fonts.Length > 0)
             {
-                using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
+                foreach (var font in fonts)
                 {
-                    for (int y = 0; y < VramHeight; y++)
+                    if (font.PixelData == null || font.PixelData.Length == 0) continue;
+
+                    int vramX = font.VramX;
+                    int vramY = font.VramY;
+                    int texH = font.TextureHeight;
+                    int bytesPerRow = 256 / 2; // 4bpp: 2 pixels per byte, 256 pixels wide = 128 bytes/row
+
+                    // Each byte holds two 4bpp pixels. In VRAM, 4 4bpp pixels = 1 16-bit hword.
+                    // So 256 4bpp pixels = 64 VRAM hwords.
+                    for (int y = 0; y < texH && (vramY + y) < VramHeight; y++)
                     {
-                        for (int x = 0; x < VramWidth; x++)
+                        for (int x = 0; x < 64 && (vramX + x) < VramWidth; x++)
                         {
-                            writer.Write(packed.vramPixels[x, y].Pack());
+                            // Read 4 4bpp pixels from this VRAM hword position
+                            int byteIdx = y * bytesPerRow + x * 2;
+                            if (byteIdx + 1 >= font.PixelData.Length) continue;
+                            byte b0 = font.PixelData[byteIdx];
+                            byte b1 = font.PixelData[byteIdx + 1];
+                            // Each byte: low nibble = first pixel, high nibble = second
+                            // 4 pixels per hword: b0 low, b0 high, b1 low, b1 high
+                            bool anyOpaque = ((b0 & 0x0F) | (b0 >> 4) | (b1 & 0x0F) | (b1 >> 4)) != 0;
+
+                            if (anyOpaque)
+                            {
+                                int px = vramX + x;
+                                int py = VramHeight - 1 - (vramY + y);
+                                if (px < VramWidth && py >= 0)
+                                    vramImage.SetPixel(px, py, new Color(0.8f, 0.8f, 1f));
+                            }
                         }
                     }
                 }
             }
 
+            // Also show system font area (960, 464)-(1023, 511) = 64x48
+            for (int y = 464; y < 512 && y < VramHeight; y++)
+            {
+                for (int x = 960; x < 1024 && x < VramWidth; x++)
+                {
+                    int py = VramHeight - 1 - y;
+                    Color existing = vramImage.GetPixel(x, py);
+                    if (existing.r < 0.01f && existing.g < 0.01f && existing.b < 0.01f)
+                        vramImage.SetPixel(x, py, new Color(0.3f, 0.3f, 0.5f));
+                }
+            }
+
+            vramImage.Apply();
         }
 
         private void OnGUI()
         {
             GUILayout.BeginHorizontal();
             GUILayout.BeginVertical();
-            GUILayout.Label("VRAM Editor", EditorStyles.boldLabel);
+            GUILayout.Label("VRAM Editor", PSXEditorStyles.WindowHeader);
+            GUILayout.Label("320x240, dual-buffered, vertical layout", PSXEditorStyles.InfoBox);
 
-            // Dropdown for resolution selection.
-            selectedResolution = resolutions[EditorGUILayout.Popup("Resolution", System.Array.IndexOf(resolutions, selectedResolution), resolutionsStrings)];
-
-            // Check resolution constraints for dual buffering.
-            bool canDBHorizontal = selectedResolution.x * 2 <= VramWidth;
-            bool canDBVertical = selectedResolution.y * 2 <= VramHeight;
-
-            if (canDBHorizontal || canDBVertical)
-            {
-                dualBuffering = EditorGUILayout.Toggle("Dual Buffering", dualBuffering);
-            }
-            else
-            {
-                dualBuffering = false;
-            }
-
-            if (canDBVertical && canDBHorizontal)
-            {
-                verticalLayout = EditorGUILayout.Toggle("Vertical", verticalLayout);
-            }
-            else if (canDBVertical)
-            {
-                verticalLayout = true;
-            }
-            else
-            {
-                verticalLayout = false;
-            }
-
-            GUILayout.Space(10);
-            GUILayout.Label("Prohibited Areas", EditorStyles.boldLabel);
-            GUILayout.Space(10);
+            PSXEditorStyles.DrawSeparator(6, 6);
+            GUILayout.Label("Prohibited Areas", PSXEditorStyles.SectionHeader);
+            GUILayout.Space(4);
 
             scrollPosition = GUILayout.BeginScrollView(scrollPosition, false, true, GUILayout.MinHeight(300f), GUILayout.ExpandWidth(true));
 
@@ -213,10 +215,7 @@ namespace SplashEdit.EditorCode
             {
                 var area = prohibitedAreas[i];
 
-                GUI.backgroundColor = new Color(0.95f, 0.95f, 0.95f);
-                GUILayout.BeginVertical("box");
-
-                GUI.backgroundColor = Color.white;
+                PSXEditorStyles.BeginCard();
 
                 // Display fields for editing the area
                 area.X = EditorGUILayout.IntField("X Coordinate", area.X);
@@ -224,17 +223,16 @@ namespace SplashEdit.EditorCode
                 area.Width = EditorGUILayout.IntField("Width", area.Width);
                 area.Height = EditorGUILayout.IntField("Height", area.Height);
 
-
-                if (GUILayout.Button("Remove", GUILayout.Height(30)))
+                EditorGUILayout.Space(2);
+                if (GUILayout.Button("Remove", PSXEditorStyles.DangerButton, GUILayout.Height(24)))
                 {
                     toRemove.Add(i); // Mark for removal
                 }
 
-
                 prohibitedAreas[i] = area;
 
-                GUILayout.EndVertical();
-                GUILayout.Space(10);
+                PSXEditorStyles.EndCard();
+                GUILayout.Space(4);
             }
 
             // Remove the areas marked for deletion outside the loop to avoid skipping elements
@@ -246,19 +244,23 @@ namespace SplashEdit.EditorCode
             GUILayout.EndScrollView();
             GUILayout.Space(10);
 
-            if (GUILayout.Button("Add Prohibited Area"))
+            if (GUILayout.Button("Add Prohibited Area", PSXEditorStyles.SecondaryButton))
             {
                 prohibitedAreas.Add(new ProhibitedArea());
             }
 
-            // Button to initiate texture packing.
-            if (GUILayout.Button("Pack Textures"))
+            PSXEditorStyles.DrawSeparator(4, 4);
+
+            // Button to pack and preview VRAM layout.
+            if (GUILayout.Button("Pack Preview", PSXEditorStyles.PrimaryButton, GUILayout.Height(28)))
             {
                 PackTextures();
             }
 
-            // Button to save settings; saving now occurs only on button press.
-            if (GUILayout.Button("Save Settings"))
+            EditorGUILayout.Space(2);
+
+            // Button to save prohibited areas.
+            if (GUILayout.Button("Save Settings", PSXEditorStyles.SuccessButton, GUILayout.Height(28)))
             {
                 _psxData.OutputResolution = selectedResolution;
                 _psxData.DualBuffering = dualBuffering;
@@ -297,13 +299,25 @@ namespace SplashEdit.EditorCode
                 EditorGUI.DrawRect(areaRect, prohibitedColor);
             }
 
+            // Draw font region overlays.
+            if (_cachedFonts != null)
+            {
+                Color fontColor = new Color(0.2f, 0.4f, 0.9f, 0.25f);
+                foreach (var font in _cachedFonts)
+                {
+                    if (font.PixelData == null || font.PixelData.Length == 0) continue;
+                    Rect fontRect = new Rect(vramRect.x + font.VramX, vramRect.y + font.VramY, 64, font.TextureHeight);
+                    EditorGUI.DrawRect(fontRect, fontColor);
+                    GUI.Label(new Rect(fontRect.x + 2, fontRect.y + 2, 60, 16), "Font", EditorStyles.miniLabel);
+                }
+
+                // System font overlay
+                Rect sysFontRect = new Rect(vramRect.x + 960, vramRect.y + 464, 64, 48);
+                EditorGUI.DrawRect(sysFontRect, new Color(0.4f, 0.2f, 0.9f, 0.25f));
+                GUI.Label(new Rect(sysFontRect.x + 2, sysFontRect.y + 2, 60, 16), "SysFont", EditorStyles.miniLabel);
+            }
+
             GUILayout.EndHorizontal();
         }
-
-        /// <summary>
-        /// Stores current configuration to the PSX data asset.
-        /// This is now triggered manually via the "Save Settings" button.
-        /// </summary>
-
     }
 }

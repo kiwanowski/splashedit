@@ -70,7 +70,7 @@ namespace SplashEdit.RuntimeCode
             List<Vector3> centroids = Enumerable.Range(0, k).Select(i => colors[i * colors.Count / k]).ToList();
 
             List<List<Vector3>> clusters;
-            for (int i = 0; i < 10; i++) // Fixed iterations for performance.... i hate this...
+            for (int i = 0; i < 10; i++) // Fixed iteration count
             {
                 clusters = Enumerable.Range(0, k).Select(_ => new List<Vector3>()).ToList();
                 foreach (Vector3 color in colors)
@@ -137,53 +137,55 @@ namespace SplashEdit.RuntimeCode
         private class Node
         {
             public Vector3 Point;
+            public int Index;
             public Node Left, Right;
         }
 
         private Node root;
-        private List<Vector3> points;
 
         public KDTree(List<Vector3> points)
         {
-            this.points = points;
-            root = Build(points, 0);
+            var indexed = new List<(Vector3 point, int index)>();
+            for (int i = 0; i < points.Count; i++)
+                indexed.Add((points[i], i));
+            root = Build(indexed, 0);
         }
 
-        private Node Build(List<Vector3> points, int depth)
+        private Node Build(List<(Vector3 point, int index)> items, int depth)
         {
-            if (points.Count == 0) return null;
+            if (items.Count == 0) return null;
 
             int axis = depth % 3;
-            points.Sort((a, b) => a[axis].CompareTo(b[axis]));
-            int median = points.Count / 2;
+            items.Sort((a, b) => a.point[axis].CompareTo(b.point[axis]));
+            int median = items.Count / 2;
 
             return new Node
             {
-                Point = points[median],
-                Left = Build(points.Take(median).ToList(), depth + 1),
-                Right = Build(points.Skip(median + 1).ToList(), depth + 1)
+                Point = items[median].point,
+                Index = items[median].index,
+                Left = Build(items.Take(median).ToList(), depth + 1),
+                Right = Build(items.Skip(median + 1).ToList(), depth + 1)
             };
         }
 
         public int FindNearestIndex(Vector3 target)
         {
-            Vector3 nearest = FindNearest(root, target, 0, root.Point);
-            return points.IndexOf(nearest);
+            return FindNearest(root, target, 0, root).Index;
         }
 
-        private Vector3 FindNearest(Node node, Vector3 target, int depth, Vector3 best)
+        private Node FindNearest(Node node, Vector3 target, int depth, Node best)
         {
             if (node == null) return best;
 
-            if (Vector3.SqrMagnitude(target - node.Point) < Vector3.SqrMagnitude(target - best))
-                best = node.Point;
+            if (Vector3.SqrMagnitude(target - node.Point) < Vector3.SqrMagnitude(target - best.Point))
+                best = node;
 
             int axis = depth % 3;
             Node first = target[axis] < node.Point[axis] ? node.Left : node.Right;
             Node second = first == node.Left ? node.Right : node.Left;
 
             best = FindNearest(first, target, depth + 1, best);
-            if (Mathf.Pow(target[axis] - node.Point[axis], 2) < Vector3.SqrMagnitude(target - best))
+            if (Mathf.Pow(target[axis] - node.Point[axis], 2) < Vector3.SqrMagnitude(target - best.Point))
                 best = FindNearest(second, target, depth + 1, best);
 
             return best;
