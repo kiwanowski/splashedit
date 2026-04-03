@@ -13,6 +13,8 @@ namespace SplashEdit.EditorCode
         private SerializedProperty bitDepthProp;
         private SerializedProperty luaFileProp;
         private SerializedProperty collisionTypeProp;
+        private SerializedProperty vertexColorModeProp;
+        private SerializedProperty flatVertexColorProp;
 
         private MeshFilter meshFilter;
         private MeshRenderer meshRenderer;
@@ -28,6 +30,8 @@ namespace SplashEdit.EditorCode
             bitDepthProp = serializedObject.FindProperty("bitDepth");
             luaFileProp = serializedObject.FindProperty("luaFile");
             collisionTypeProp = serializedObject.FindProperty("collisionType");
+            vertexColorModeProp = serializedObject.FindProperty("vertexColorMode");
+            flatVertexColorProp = serializedObject.FindProperty("flatVertexColor");
 
             CacheMeshInfo();
         }
@@ -119,6 +123,23 @@ namespace SplashEdit.EditorCode
             EditorGUI.indentLevel++;
 
             EditorGUILayout.PropertyField(bitDepthProp, new GUIContent("Bit Depth"));
+
+            EditorGUILayout.PropertyField(vertexColorModeProp, new GUIContent("Vertex Colors"));
+            var vcMode = (VertexColorMode)vertexColorModeProp.enumValueIndex;
+            if (vcMode == VertexColorMode.FlatColor)
+            {
+                EditorGUILayout.PropertyField(flatVertexColorProp, new GUIContent("Flat Color"));
+            }
+            else if (vcMode == VertexColorMode.MeshVertexColors)
+            {
+                var exporter = target as PSXObjectExporter;
+                var mf = exporter.GetComponent<MeshFilter>();
+                if (mf != null && mf.sharedMesh != null && (mf.sharedMesh.colors == null || mf.sharedMesh.colors.Length == 0))
+                {
+                    EditorGUILayout.HelpBox("This mesh has no vertex colors. Will fall back to gray (128,128,128).", MessageType.Warning);
+                }
+            }
+
             EditorGUILayout.PropertyField(luaFileProp, new GUIContent("Lua Script"));
 
             if (luaFileProp.objectReferenceValue != null)

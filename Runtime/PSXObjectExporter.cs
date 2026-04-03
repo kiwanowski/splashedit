@@ -12,6 +12,13 @@ namespace SplashEdit.RuntimeCode
         Dynamic = 2
     }
 
+    public enum VertexColorMode
+    {
+        BakedLighting = 0,
+        FlatColor = 1,
+        MeshVertexColors = 2
+    }
+
     [RequireComponent(typeof(MeshFilter))]
     [RequireComponent(typeof(MeshRenderer))]
     [Icon("Packages/net.psxsplash.splashedit/Icons/PSXObjectExporter.png")]
@@ -33,8 +40,13 @@ namespace SplashEdit.RuntimeCode
         [FormerlySerializedAs("collisionType")]
         [SerializeField] private PSXCollisionType collisionType = PSXCollisionType.None;
 
+        [SerializeField] private VertexColorMode vertexColorMode = VertexColorMode.BakedLighting;
+        [SerializeField] private Color32 flatVertexColor = new Color32(128, 128, 128, 255);
+
         public PSXBPP BitDepth => bitDepth;
         public PSXCollisionType CollisionType => collisionType;
+        public VertexColorMode ColorMode => vertexColorMode;
+        public Color32 FlatVertexColor => flatVertexColor;
 
         private readonly Dictionary<(int, PSXBPP), PSXTexture2D> cache = new();
 
@@ -99,7 +111,7 @@ namespace SplashEdit.RuntimeCode
             Renderer renderer = GetComponent<Renderer>();
             if (renderer != null)
             {
-                Mesh = PSXMesh.CreateFromUnityRenderer(renderer, GTEScaling, transform, Textures);
+                Mesh = PSXMesh.CreateFromUnityRenderer(renderer, GTEScaling, transform, Textures, vertexColorMode, flatVertexColor);
             }
         }
     }

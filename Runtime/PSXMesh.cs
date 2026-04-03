@@ -86,21 +86,24 @@ namespace SplashEdit.RuntimeCode
         /// <summary>
         /// Creates a PSXMesh from a Unity Renderer by extracting its mesh and materials.
         /// </summary>
-        public static PSXMesh CreateFromUnityRenderer(Renderer renderer, float GTEScaling, Transform transform, List<PSXTexture2D> textures)
+        public static PSXMesh CreateFromUnityRenderer(Renderer renderer, float GTEScaling, Transform transform, List<PSXTexture2D> textures,
+            VertexColorMode colorMode = VertexColorMode.BakedLighting, Color32? flatColor = null)
         {
             Mesh mesh = renderer.GetComponent<MeshFilter>().sharedMesh;
-            return BuildFromMesh(mesh, renderer, GTEScaling, transform, textures);
+            return BuildFromMesh(mesh, renderer, GTEScaling, transform, textures, colorMode, flatColor);
         }
 
         /// <summary>
         /// Creates a PSXMesh from a supplied Unity Mesh with the renderer's materials.
         /// </summary>
-        public static PSXMesh CreateFromUnityMesh(Mesh mesh, Renderer renderer, float GTEScaling, Transform transform, List<PSXTexture2D> textures)
+        public static PSXMesh CreateFromUnityMesh(Mesh mesh, Renderer renderer, float GTEScaling, Transform transform, List<PSXTexture2D> textures,
+            VertexColorMode colorMode = VertexColorMode.BakedLighting, Color32? flatColor = null)
         {
-            return BuildFromMesh(mesh, renderer, GTEScaling, transform, textures);
+            return BuildFromMesh(mesh, renderer, GTEScaling, transform, textures, colorMode, flatColor);
         }
 
-        private static PSXMesh BuildFromMesh(Mesh mesh, Renderer renderer, float GTEScaling, Transform transform, List<PSXTexture2D> textures)
+        private static PSXMesh BuildFromMesh(Mesh mesh, Renderer renderer, float GTEScaling, Transform transform, List<PSXTexture2D> textures,
+            VertexColorMode colorMode = VertexColorMode.BakedLighting, Color32? flatColor = null)
         {
             PSXMesh psxMesh = new PSXMesh { Triangles = new List<Tri>() };
             Material[] materials = renderer.sharedMaterials;
@@ -114,9 +117,17 @@ namespace SplashEdit.RuntimeCode
 
             Vector3[] smoothNormals = RecalculateSmoothNormals(mesh);
 
-            // Cache lights once for the entire mesh
-            Light[] sceneLights = Object.FindObjectsByType<Light>(FindObjectsSortMode.None)
-                .Where(l => l.enabled).ToArray();
+            // Cache lights once for the entire mesh (only needed for baked lighting)
+            Light[] sceneLights = colorMode == VertexColorMode.BakedLighting
+                ? Object.FindObjectsByType<Light>(FindObjectsSortMode.None).Where(l => l.enabled).ToArray()
+                : null;
+
+            // Mesh vertex colors (only for MeshVertexColors mode)
+            Color[] meshColors = colorMode == VertexColorMode.MeshVertexColors ? mesh.colors : null;
+            bool hasMeshColors = meshColors != null && meshColors.Length == mesh.vertexCount;
+
+            // Resolved flat color
+            Color32 resolvedFlat = flatColor ?? new Color32(128, 128, 128, 255);
 
             // Precompute world positions and normals for all vertices
             Vector3[] worldVertices = new Vector3[mesh.vertices.Length];
@@ -154,9 +165,24 @@ namespace SplashEdit.RuntimeCode
                 PSXVertex convertData(int index)
                 {
                     Vector3 v = Vector3.Scale(vertices[index], transform.lossyScale);
-                    Vector3 wv = worldVertices[index];
-                    Vector3 wn = worldNormals[index];
-                    Color c = PSXLightingBaker.ComputeLighting(wv, wn, sceneLights);
+                    Color c;
+
+                    switch (colorMode)
+                    {
+                        case VertexColorMode.FlatColor:
+                            c = new Color(resolvedFlat.r / 255f, resolvedFlat.g / 255f, resolvedFlat.b / 255f);
+                            break;
+                        case VertexColorMode.MeshVertexColors:
+                            c = hasMeshColors ? meshColors[index] : new Color(0.5f, 0.5f, 0.5f);
+                            break;
+                        default: // BakedLighting
+                        {
+                            Vector3 wv = worldVertices[index];
+                            Vector3 wn = worldNormals[index];
+                            c = PSXLightingBaker.ComputeLighting(wv, wn, sceneLights);
+                            break;
+                        }
+                    }
 
                     if (textureIndex == -1)
                     {
