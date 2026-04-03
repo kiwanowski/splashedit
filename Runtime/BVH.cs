@@ -144,6 +144,19 @@ namespace SplashEdit.RuntimeCode
             return result;
         }
         
+        private const int SAH_BIN_COUNT = 8;  // Number of bins for SAH evaluation
+        private const float TRAVERSAL_COST = 1.0f;  // Relative cost of a BVH node traversal
+        private const float INTERSECT_COST = 1.0f;  // Relative cost of triangle intersection
+
+        /// <summary>
+        /// Compute the half-surface-area of an AABB (proportional to full surface area).
+        /// </summary>
+        private static float HalfSurfaceArea(Bounds b)
+        {
+            Vector3 s = b.size;
+            return s.x * s.y + s.y * s.z + s.z * s.x;
+        }
+
         private BVHNode BuildNode(List<TriangleWithBounds> triangles, int depth)
         {
             if (triangles.Count == 0)
@@ -166,60 +179,145 @@ namespace SplashEdit.RuntimeCode
                 node.triangles = triangles.Select(t => t.reference).ToList();
                 return node;
             }
-            
-            // Find best split axis (longest extent)
-            Vector3 extent = node.bounds.size;
-            int axis = 0;
-            if (extent.y > extent.x && extent.y > extent.z) axis = 1;
-            else if (extent.z > extent.x && extent.z > extent.y) axis = 2;
-            
-            // Sort by centroid along chosen axis
-            triangles.Sort((a, b) => 
+
+            float parentArea = HalfSurfaceArea(node.bounds);
+            if (parentArea <= 0f)
             {
-                float va = axis == 0 ? a.centroid.x : (axis == 1 ? a.centroid.y : a.centroid.z);
-                float vb = axis == 0 ? b.centroid.x : (axis == 1 ? b.centroid.y : b.centroid.z);
-                return va.CompareTo(vb);
-            });
-            
-            // Find split plane position at median centroid
-            int mid = triangles.Count / 2;
-            if (mid == 0) mid = 1;
-            if (mid >= triangles.Count) mid = triangles.Count - 1;
-            
-            float splitPos = axis == 0 ? triangles[mid].centroid.x : 
-                            (axis == 1 ? triangles[mid].centroid.y : triangles[mid].centroid.z);
-            
-            // Partition triangles - allow overlap for triangles spanning the split plane
-            var leftTris = new List<TriangleWithBounds>();
-            var rightTris = new List<TriangleWithBounds>();
-            
-            foreach (var tri in triangles)
-            {
-                float triMin = axis == 0 ? tri.bounds.min.x : (axis == 1 ? tri.bounds.min.y : tri.bounds.min.z);
-                float triMax = axis == 0 ? tri.bounds.max.x : (axis == 1 ? tri.bounds.max.y : tri.bounds.max.z);
-                
-                // Triangle spans split plane - add to BOTH children (spatial split)
-                // This fixes large triangles at screen edges being culled incorrectly
-                if (triMin < splitPos && triMax > splitPos)
-                {
-                    leftTris.Add(tri);
-                    rightTris.Add(tri);
-                }
-                // Triangle entirely on left side
-                else if (triMax <= splitPos)
-                {
-                    leftTris.Add(tri);
-                }
-                // Triangle entirely on right side
-                else
-                {
-                    rightTris.Add(tri);
-                }
+                // Degenerate AABB (zero volume), make a leaf
+                node.triangles = triangles.Select(t => t.reference).ToList();
+                return node;
             }
             
-            // Check if split is beneficial (prevents infinite recursion on coincident triangles)
-            if (leftTris.Count == 0 || rightTris.Count == 0 ||
-                (leftTris.Count == triangles.Count && rightTris.Count == triangles.Count))
+            // Compute centroid bounds to determine bin ranges
+            Bounds centroidBounds = new Bounds(triangles[0].centroid, Vector3.zero);
+            for (int i = 1; i < triangles.Count; i++)
+                centroidBounds.Encapsulate(triangles[i].centroid);
+
+            float bestCost = float.MaxValue;
+            int bestAxis = -1;
+            int bestSplit = -1; // split after bin index bestSplit (left = bins [0..bestSplit], right = [bestSplit+1..N-1])
+
+            // Evaluate all 3 axes with binned SAH
+            for (int axis = 0; axis < 3; axis++)
+            {
+                float cMin = (axis == 0) ? centroidBounds.min.x : (axis == 1) ? centroidBounds.min.y : centroidBounds.min.z;
+                float cMax = (axis == 0) ? centroidBounds.max.x : (axis == 1) ? centroidBounds.max.y : centroidBounds.max.z;
+                float range = cMax - cMin;
+                if (range <= 1e-6f) continue; // No spread on this axis
+
+                // Initialize bins
+                int[] binCount = new int[SAH_BIN_COUNT];
+                Bounds[] binBounds = new Bounds[SAH_BIN_COUNT];
+                for (int b = 0; b < SAH_BIN_COUNT; b++)
+                {
+                    binCount[b] = 0;
+                    binBounds[b] = new Bounds(Vector3.zero, Vector3.zero);
+                }
+                bool[] binInitialized = new bool[SAH_BIN_COUNT];
+
+                float invRange = (SAH_BIN_COUNT) / range;
+
+                // Assign triangles to bins by centroid
+                foreach (var tri in triangles)
+                {
+                    float c = (axis == 0) ? tri.centroid.x : (axis == 1) ? tri.centroid.y : tri.centroid.z;
+                    int bin = Mathf.Clamp((int)((c - cMin) * invRange), 0, SAH_BIN_COUNT - 1);
+                    binCount[bin]++;
+                    if (!binInitialized[bin])
+                    {
+                        binBounds[bin] = tri.bounds;
+                        binInitialized[bin] = true;
+                    }
+                    else
+                    {
+                        binBounds[bin].Encapsulate(tri.bounds);
+                    }
+                }
+
+                // Sweep from left to compute prefix counts and bounds
+                int[] leftCount = new int[SAH_BIN_COUNT - 1];
+                float[] leftArea = new float[SAH_BIN_COUNT - 1];
+                {
+                    int runCount = 0;
+                    Bounds runBounds = new Bounds();
+                    bool runInit = false;
+                    for (int s = 0; s < SAH_BIN_COUNT - 1; s++)
+                    {
+                        runCount += binCount[s];
+                        if (binCount[s] > 0)
+                        {
+                            if (!runInit) { runBounds = binBounds[s]; runInit = true; }
+                            else runBounds.Encapsulate(binBounds[s]);
+                        }
+                        leftCount[s] = runCount;
+                        leftArea[s] = runInit ? HalfSurfaceArea(runBounds) : 0f;
+                    }
+                }
+
+                // Sweep from right
+                int[] rightCount = new int[SAH_BIN_COUNT - 1];
+                float[] rightArea = new float[SAH_BIN_COUNT - 1];
+                {
+                    int runCount = 0;
+                    Bounds runBounds = new Bounds();
+                    bool runInit = false;
+                    for (int s = SAH_BIN_COUNT - 2; s >= 0; s--)
+                    {
+                        runCount += binCount[s + 1];
+                        if (binCount[s + 1] > 0)
+                        {
+                            if (!runInit) { runBounds = binBounds[s + 1]; runInit = true; }
+                            else runBounds.Encapsulate(binBounds[s + 1]);
+                        }
+                        rightCount[s] = runCount;
+                        rightArea[s] = runInit ? HalfSurfaceArea(runBounds) : 0f;
+                    }
+                }
+
+                // Find best split for this axis
+                for (int s = 0; s < SAH_BIN_COUNT - 1; s++)
+                {
+                    if (leftCount[s] == 0 || rightCount[s] == 0) continue;
+                    float cost = TRAVERSAL_COST +
+                        (leftCount[s] * leftArea[s] + rightCount[s] * rightArea[s]) * INTERSECT_COST / parentArea;
+                    if (cost < bestCost)
+                    {
+                        bestCost = cost;
+                        bestAxis = axis;
+                        bestSplit = s;
+                    }
+                }
+            }
+
+            // Compare SAH cost to leaf cost
+            float leafCost = triangles.Count * INTERSECT_COST;
+            if (bestAxis < 0 || bestCost >= leafCost)
+            {
+                // No beneficial split found — make a leaf
+                node.triangles = triangles.Select(t => t.reference).ToList();
+                return node;
+            }
+
+            // Partition triangles according to best split
+            float splitMin = (bestAxis == 0) ? centroidBounds.min.x : (bestAxis == 1) ? centroidBounds.min.y : centroidBounds.min.z;
+            float splitMax = (bestAxis == 0) ? centroidBounds.max.x : (bestAxis == 1) ? centroidBounds.max.y : centroidBounds.max.z;
+            float splitRange = splitMax - splitMin;
+            float splitInvRange = SAH_BIN_COUNT / splitRange;
+
+            var leftTris = new List<TriangleWithBounds>();
+            var rightTris = new List<TriangleWithBounds>();
+            foreach (var tri in triangles)
+            {
+                float c = (bestAxis == 0) ? tri.centroid.x : (bestAxis == 1) ? tri.centroid.y : tri.centroid.z;
+                int bin = Mathf.Clamp((int)((c - splitMin) * splitInvRange), 0, SAH_BIN_COUNT - 1);
+                if (bin <= bestSplit)
+                    leftTris.Add(tri);
+                else
+                    rightTris.Add(tri);
+            }
+            
+            // Safety: if partition failed (all on one side), fall back to leaf
+            if (leftTris.Count == 0 || rightTris.Count == 0)
             {
                 node.triangles = triangles.Select(t => t.reference).ToList();
                 return node;

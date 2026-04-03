@@ -670,6 +670,10 @@ namespace SplashEdit.EditorCode
                 new GUIContent("FPS Overlay", "Show an FPS counter at top-left during gameplay"),
                 SplashSettings.FpsOverlay);
 
+            SplashSettings.RoomDebugOverlay = EditorGUILayout.Toggle(
+                new GUIContent("Room Debug Overlay", "Render ALL room triangles in per-room colors on top of the scene for culling diagnosis"),
+                SplashSettings.RoomDebugOverlay);
+
             SplashSettings.OtSize = EditorGUILayout.IntField(
                 new GUIContent("OT Size", "Ordering table entries. Lower = less RAM, shallower Z-sorting."),
                 SplashSettings.OtSize);
@@ -1710,6 +1714,9 @@ namespace SplashEdit.EditorCode
             
             if (SplashSettings.FpsOverlay)
                 buildArg += " FPSOVERLAY=1";
+
+            if (SplashSettings.RoomDebugOverlay)
+                buildArg += " ROOMDEBUG=1";
 
             buildArg += $" OT_SIZE={SplashSettings.OtSize} BUMP_SIZE={SplashSettings.BumpSize}";
 

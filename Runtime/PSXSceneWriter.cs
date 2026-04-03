@@ -172,8 +172,15 @@ namespace SplashEdit.RuntimeCode
                 else
                     writer.Write((short)-1);
 
-                writer.Write((ushort)scene.bvh.NodeCount);
-                writer.Write((ushort)scene.bvh.TriangleRefCount);
+                // Overflow guards: these counts are serialized as uint16.
+                // If they exceed 65535, the binary will be corrupted silently.
+                if (scene.bvh.NodeCount > 65535)
+                    Debug.LogError($"BVH node count ({scene.bvh.NodeCount}) exceeds uint16 max! Scene has too many BVH nodes.");
+                if (scene.bvh.TriangleRefCount > 65535)
+                    Debug.LogError($"BVH triangle ref count ({scene.bvh.TriangleRefCount}) exceeds uint16 max! Scene has too many triangle references.");
+
+                writer.Write((ushort)Mathf.Min(scene.bvh.NodeCount, 65535));
+                writer.Write((ushort)Mathf.Min(scene.bvh.TriangleRefCount, 65535));
 
                 writer.Write((ushort)scene.sceneType);
                 writer.Write((ushort)triggerBoxCount); // was pad0
@@ -220,14 +227,26 @@ namespace SplashEdit.RuntimeCode
                     int roomCount = scene.roomBuilder?.RoomCount ?? 0;
                     int portalCount = scene.roomBuilder?.PortalCount ?? 0;
                     int roomTriRefCount = scene.roomBuilder?.TotalTriRefCount ?? 0;
-                    writer.Write((ushort)(roomCount > 0 ? roomCount + 1 : 0));
-                    writer.Write((ushort)portalCount);
-                    writer.Write((ushort)roomTriRefCount);
+
+                    // Overflow guards for room system counts (all serialized as uint16)
+                    if (roomCount + 1 > 65535)
+                        Debug.LogError($"Room count ({roomCount}+1) exceeds uint16 max!");
+                    if (portalCount > 65535)
+                        Debug.LogError($"Portal count ({portalCount}) exceeds uint16 max!");
+                    if (roomTriRefCount > 65535)
+                        Debug.LogError($"Room triangle ref count ({roomTriRefCount}) exceeds uint16 max! Reduce scene complexity.");
+
+                    writer.Write((ushort)Mathf.Min(roomCount > 0 ? roomCount + 1 : 0, 65535));
+                    writer.Write((ushort)Mathf.Min(portalCount, 65535));
+                    writer.Write((ushort)Mathf.Min(roomTriRefCount, 65535));
                 }
 
                 int cutsceneCount = scene.cutscenes?.Length ?? 0;
                 writer.Write((ushort)cutsceneCount);
-                writer.Write((ushort)0); // pad4
+                int roomCellCount = scene.roomBuilder?.CellCount ?? 0;
+                if (roomCellCount > 65535)
+                    Debug.LogError($"Room cell count ({roomCellCount}) exceeds uint16 max!");
+                writer.Write((ushort)Mathf.Min(roomCellCount, 65535));
                 long cutsceneTableOffsetPos = writer.BaseStream.Position;
                 writer.Write((uint)0); // cutsceneTableOffset placeholder
 
@@ -245,7 +264,10 @@ namespace SplashEdit.RuntimeCode
                 // Animation header fields (v17)
                 int animationCount = scene.animations?.Length ?? 0;
                 writer.Write((ushort)animationCount);
-                writer.Write((ushort)0); // animPad
+                int roomPortalRefCount = scene.roomBuilder?.PortalRefCount ?? 0;
+                if (roomPortalRefCount > 65535)
+                    Debug.LogError($"Room portal ref count ({roomPortalRefCount}) exceeds uint16 max!");
+                writer.Write((ushort)Mathf.Min(roomPortalRefCount, 65535));
                 long animationTableOffsetPos = writer.BaseStream.Position;
                 writer.Write((uint)0); // animationTableOffset placeholder
 

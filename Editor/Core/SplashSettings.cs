@@ -149,6 +149,19 @@ namespace SplashEdit.EditorCode
             set => EditorPrefs.SetBool(Prefix + "FpsOverlay", value);
         }
 
+        // --- Room Debug Overlay ---
+        /// <summary>
+        /// When enabled, compiles the runtime with a debug overlay that renders
+        /// ALL room triangles in per-room colors on top of the scene.
+        /// Useful for visualizing portal/room topology and diagnosing culling issues.
+        /// Passes ROOMDEBUG=1 to the native Makefile.
+        /// </summary>
+        public static bool RoomDebugOverlay
+        {
+            get => EditorPrefs.GetBool(Prefix + "RoomDebugOverlay", false);
+            set => EditorPrefs.SetBool(Prefix + "RoomDebugOverlay", value);
+        }
+
         // --- Renderer sizes ---
         public static int OtSize
         {

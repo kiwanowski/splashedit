@@ -99,13 +99,40 @@ namespace SplashEdit.RuntimeCode
     /// </summary>
     public class PSXRoomBuilder
     {
+        private const int CELLS_PER_AXIS = 2; // 2×2×2 = 8 cells per room
+
         private PSXRoom[] _rooms;
         private List<PSXPortal> _portals = new List<PSXPortal>();
         private List<BVH.TriangleRef>[] _roomTriRefs;
         private List<BVH.TriangleRef> _catchAllTriRefs = new List<BVH.TriangleRef>();
 
+        // Per-room spatial cells for sub-room frustum culling
+        private List<RoomCellData> _allCells = new List<RoomCellData>();
+        // Per-room: firstCell index and cellCount
+        private int[] _roomFirstCell;
+        private int[] _roomCellCount;
+
+        // Per-room portal reference lists (Phase 5)
+        private struct PortalRefEntry
+        {
+            public ushort portalIndex; // index into _portals
+            public ushort otherRoom;   // room on the other side
+        }
+        private List<PortalRefEntry> _allPortalRefs = new List<PortalRefEntry>();
+        private int[] _roomFirstPortalRef;
+        private int[] _roomPortalRefCount;
+
+        /// <summary>Cell data generated during Build, before coordinate conversion.</summary>
+        private struct RoomCellData
+        {
+            public Bounds bounds;               // tight AABB around cell's actual triangles (world space)
+            public List<BVH.TriangleRef> triRefs; // triangles in this cell
+        }
+
         public int RoomCount => _rooms?.Length ?? 0;
         public int PortalCount => _portals?.Count ?? 0;
+        public int CellCount => _allCells?.Count ?? 0;
+        public int PortalRefCount => _allPortalRefs?.Count ?? 0;
         public int TotalTriRefCount
         {
             get
@@ -219,8 +246,211 @@ namespace SplashEdit.RuntimeCode
                 _roomTriRefs[i].Sort((a, b) => a.objectIndex.CompareTo(b.objectIndex));
             _catchAllTriRefs.Sort((a, b) => a.objectIndex.CompareTo(b.objectIndex));
 
+            // Generate per-room spatial cells for sub-room frustum culling.
+            // This subdivides room tri-ref lists into spatial cells and re-orders
+            // the tri-refs so each cell's refs are contiguous. Must happen after
+            // sorting since it replaces and re-sorts.
+            GenerateCells(exporters);
+
+            // Generate per-room portal reference lists (Phase 5).
+            // Each room gets a list of {portalIndex, otherRoom} entries so the
+            // runtime can iterate only the portals touching a given room.
+            GeneratePortalRefs();
+
             Debug.Log($"PSXRoomBuilder: {rooms.Length} rooms, {_portals.Count} portals, " +
-                      $"{TotalTriRefCount} tri-refs ({_catchAllTriRefs.Count} catch-all)");
+                      $"{TotalTriRefCount} tri-refs ({_catchAllTriRefs.Count} catch-all), " +
+                      $"{_allCells.Count} cells, {_allPortalRefs.Count} portal-refs");
+        }
+
+        /// <summary>
+        /// Subdivide each room's triangle list into a coarse 3D grid (CELLS_PER_AXIS³).
+        /// Each cell gets its own tight AABB and contiguous tri-ref sublist.
+        /// The room's tri-ref list is rewritten so cells point into it.
+        /// </summary>
+        private void GenerateCells(PSXObjectExporter[] exporters)
+        {
+            _allCells.Clear();
+            int totalRooms = _rooms.Length + 1; // +1 for catch-all
+            _roomFirstCell = new int[totalRooms];
+            _roomCellCount = new int[totalRooms];
+
+            // Process each real room + the catch-all as the last entry.
+            for (int ri = 0; ri < totalRooms; ri++)
+            {
+                List<BVH.TriangleRef> triRefs = (ri < _rooms.Length)
+                    ? _roomTriRefs[ri]
+                    : _catchAllTriRefs;
+
+                _roomFirstCell[ri] = _allCells.Count;
+
+                if (triRefs.Count == 0)
+                {
+                    _roomCellCount[ri] = 0;
+                    continue;
+                }
+
+                // Compute the room's actual AABB from its triangles' centroids/vertices.
+                Bounds roomBounds;
+                if (ri < _rooms.Length)
+                    roomBounds = _rooms[ri].GetWorldBounds();
+                else
+                {
+                    // Catch-all: compute from triangles
+                    roomBounds = ComputeTriRefBounds(triRefs, exporters);
+                }
+
+                Vector3 bmin = roomBounds.min;
+                Vector3 bsize = roomBounds.size;
+                // Prevent degenerate axes (e.g. flat room)
+                if (bsize.x < 0.001f) bsize.x = 0.001f;
+                if (bsize.y < 0.001f) bsize.y = 0.001f;
+                if (bsize.z < 0.001f) bsize.z = 0.001f;
+
+                int N = CELLS_PER_AXIS;
+                int totalCells = N * N * N;
+
+                // Assign each tri-ref to a cell based on centroid
+                var cellTriRefs = new List<BVH.TriangleRef>[totalCells];
+                var cellBounds = new Bounds?[totalCells];
+                for (int c = 0; c < totalCells; c++)
+                    cellTriRefs[c] = new List<BVH.TriangleRef>();
+
+                foreach (var triRef in triRefs)
+                {
+                    if (triRef.objectIndex >= exporters.Length) continue;
+                    var exporter = exporters[triRef.objectIndex];
+                    MeshFilter mf = exporter.GetComponent<MeshFilter>();
+                    if (mf == null || mf.sharedMesh == null) continue;
+                    Mesh mesh = mf.sharedMesh;
+                    Vector3[] vertices = mesh.vertices;
+                    int[] indices = mesh.triangles;
+                    Matrix4x4 worldMatrix = exporter.transform.localToWorldMatrix;
+
+                    int triStart = triRef.triangleIndex * 3;
+                    if (triStart + 2 >= indices.Length) continue;
+                    Vector3 v0 = worldMatrix.MultiplyPoint3x4(vertices[indices[triStart]]);
+                    Vector3 v1 = worldMatrix.MultiplyPoint3x4(vertices[indices[triStart + 1]]);
+                    Vector3 v2 = worldMatrix.MultiplyPoint3x4(vertices[indices[triStart + 2]]);
+                    Vector3 centroid = (v0 + v1 + v2) / 3f;
+
+                    // Map centroid to cell index
+                    int cx = Mathf.Clamp(Mathf.FloorToInt((centroid.x - bmin.x) / bsize.x * N), 0, N - 1);
+                    int cy = Mathf.Clamp(Mathf.FloorToInt((centroid.y - bmin.y) / bsize.y * N), 0, N - 1);
+                    int cz = Mathf.Clamp(Mathf.FloorToInt((centroid.z - bmin.z) / bsize.z * N), 0, N - 1);
+                    int cellIdx = cx + cy * N + cz * N * N;
+
+                    cellTriRefs[cellIdx].Add(triRef);
+
+                    // Expand cell's tight bounds to include all vertices (not just centroid)
+                    Bounds triBounds = new Bounds(v0, Vector3.zero);
+                    triBounds.Encapsulate(v1);
+                    triBounds.Encapsulate(v2);
+                    if (cellBounds[cellIdx].HasValue)
+                    {
+                        var cb = cellBounds[cellIdx].Value;
+                        cb.Encapsulate(triBounds);
+                        cellBounds[cellIdx] = cb;
+                    }
+                    else
+                    {
+                        cellBounds[cellIdx] = triBounds;
+                    }
+                }
+
+                // Rebuild the room's tri-ref list so each cell's refs are contiguous,
+                // and each cell's refs are sorted by objectIndex for GTE batching.
+                var newTriRefs = new List<BVH.TriangleRef>();
+                int cellsAdded = 0;
+
+                for (int c = 0; c < totalCells; c++)
+                {
+                    if (cellTriRefs[c].Count == 0) continue;
+
+                    // Sort cell's tri-refs by objectIndex
+                    cellTriRefs[c].Sort((a, b) => a.objectIndex.CompareTo(b.objectIndex));
+
+                    int firstTriRef = newTriRefs.Count;
+                    newTriRefs.AddRange(cellTriRefs[c]);
+
+                    _allCells.Add(new RoomCellData
+                    {
+                        bounds = cellBounds[c].Value,
+                        triRefs = cellTriRefs[c]  // kept for reference
+                    });
+                    cellsAdded++;
+                }
+
+                // Replace the room's tri-ref list with the cell-ordered version
+                if (ri < _rooms.Length)
+                    _roomTriRefs[ri] = newTriRefs;
+                else
+                    _catchAllTriRefs = newTriRefs;
+
+                _roomCellCount[ri] = cellsAdded;
+            }
+        }
+
+        /// <summary>Compute bounds from triangle refs (for catch-all room).</summary>
+        /// <summary>
+        /// Build per-room portal reference lists.
+        /// For each room, store the portals that touch it and the room on the other side.
+        /// This replaces the O(N) portal scan at runtime with an O(k) indexed lookup.
+        /// </summary>
+        private void GeneratePortalRefs()
+        {
+            int totalRooms = _rooms.Length + 1; // +1 for catch-all
+            _allPortalRefs = new List<PortalRefEntry>();
+            _roomFirstPortalRef = new int[totalRooms];
+            _roomPortalRefCount = new int[totalRooms];
+
+            // Collect portal refs per room
+            var perRoom = new List<PortalRefEntry>[totalRooms];
+            for (int i = 0; i < totalRooms; i++)
+                perRoom[i] = new List<PortalRefEntry>();
+
+            for (int pi = 0; pi < _portals.Count; pi++)
+            {
+                var portal = _portals[pi];
+                int rA = portal.roomA;
+                int rB = portal.roomB;
+                if (rA >= 0 && rA < totalRooms)
+                    perRoom[rA].Add(new PortalRefEntry { portalIndex = (ushort)pi, otherRoom = (ushort)rB });
+                if (rB >= 0 && rB < totalRooms)
+                    perRoom[rB].Add(new PortalRefEntry { portalIndex = (ushort)pi, otherRoom = (ushort)rA });
+            }
+
+            // Flatten into a single array
+            for (int ri = 0; ri < totalRooms; ri++)
+            {
+                _roomFirstPortalRef[ri] = _allPortalRefs.Count;
+                _roomPortalRefCount[ri] = perRoom[ri].Count;
+                _allPortalRefs.AddRange(perRoom[ri]);
+            }
+        }
+
+        private static Bounds ComputeTriRefBounds(List<BVH.TriangleRef> triRefs, PSXObjectExporter[] exporters)
+        {
+            Bounds b = new Bounds(Vector3.zero, Vector3.zero);
+            bool first = true;
+            foreach (var triRef in triRefs)
+            {
+                if (triRef.objectIndex >= exporters.Length) continue;
+                var exporter = exporters[triRef.objectIndex];
+                MeshFilter mf = exporter.GetComponent<MeshFilter>();
+                if (mf == null || mf.sharedMesh == null) continue;
+                Mesh mesh = mf.sharedMesh;
+                Vector3[] vertices = mesh.vertices;
+                int[] indices = mesh.triangles;
+                Matrix4x4 worldMatrix = exporter.transform.localToWorldMatrix;
+                int triStart = triRef.triangleIndex * 3;
+                if (triStart + 2 >= indices.Length) continue;
+                Vector3 v0 = worldMatrix.MultiplyPoint3x4(vertices[indices[triStart]]);
+                Vector3 v1 = worldMatrix.MultiplyPoint3x4(vertices[indices[triStart + 1]]);
+                Vector3 v2 = worldMatrix.MultiplyPoint3x4(vertices[indices[triStart + 2]]);
+                if (first) { b = new Bounds(v0, Vector3.zero); first = false; }
+                b.Encapsulate(v0); b.Encapsulate(v1); b.Encapsulate(v2);
+            }
+            return b;
         }
 
         /// <summary>
@@ -331,27 +561,50 @@ namespace SplashEdit.RuntimeCode
                     continue;
                 }
 
+                // Auto-correct normal direction: ensure it points from roomA toward roomB.
+                // The user may place the PSXPortalLink facing either way; the runtime
+                // backface cull assumes the normal always points A→B.
+                Vector3 portalNormal = link.transform.forward;
+                Vector3 portalRight = link.transform.right;
+                Vector3 portalUp = link.transform.up;
+                Vector3 roomACenter = link.RoomA.GetWorldBounds().center;
+                Vector3 roomBCenter = link.RoomB.GetWorldBounds().center;
+                Vector3 aToB = (roomBCenter - roomACenter).normalized;
+                if (Vector3.Dot(portalNormal, aToB) < 0)
+                {
+                    // Normal faces toward A instead of B — flip it.
+                    // Also flip the right axis to keep the coordinate system consistent
+                    // (normal × right = up must stay right-handed).
+                    portalNormal = -portalNormal;
+                    portalRight = -portalRight;
+                    Debug.Log($"PSXPortalLink '{link.name}': normal auto-corrected to point from RoomA→RoomB.");
+                }
+
                 _portals.Add(new PSXPortal
                 {
                     roomA = idxA,
                     roomB = idxB,
                     center = link.transform.position,
                     portalSize = link.PortalSize,
-                    normal = link.transform.forward,
-                    right = link.transform.right,
-                    up = link.transform.up
+                    normal = portalNormal,
+                    right = portalRight,
+                    up = portalUp
                 });
             }
         }
 
         /// <summary>
         /// Write room/portal data to the splashpack binary.
+        /// Layout: [RoomData × (N+1)] [PortalData × P] [TriangleRef × T] [RoomCell × C]
         /// </summary>
         public void WriteToBinary(System.IO.BinaryWriter writer, float gteScaling)
         {
             if (_rooms == null || _rooms.Length == 0) return;
 
-            // Per-room data (32 bytes each): AABB (24) + firstTriRef (2) + triRefCount (2) + pad (4)
+            int totalRooms = _rooms.Length + 1; // +1 for catch-all (last entry)
+
+            // Per-room data (36 bytes each):
+            // AABB (24) + firstTriRef (2) + triRefCount (2) + firstCell (2) + cellCount (1) + portalRefCount (1) + firstPortalRef (2) + pad (2)
             int runningTriRefOffset = 0;
             for (int i = 0; i < _rooms.Length; i++)
             {
@@ -366,13 +619,26 @@ namespace SplashEdit.RuntimeCode
 
                 writer.Write((ushort)runningTriRefOffset);
                 writer.Write((ushort)_roomTriRefs[i].Count);
-                writer.Write((uint)0); // padding
+
+                // Cell info
+                int fc = (_roomFirstCell != null && i < _roomFirstCell.Length) ? _roomFirstCell[i] : 0;
+                int cc = (_roomCellCount != null && i < _roomCellCount.Length) ? _roomCellCount[i] : 0;
+                writer.Write((ushort)fc);
+                writer.Write((byte)cc);
+
+                // Portal ref info (Phase 5)
+                int prc = (_roomPortalRefCount != null && i < _roomPortalRefCount.Length) ? _roomPortalRefCount[i] : 0;
+                int fpr = (_roomFirstPortalRef != null && i < _roomFirstPortalRef.Length) ? _roomFirstPortalRef[i] : 0;
+                writer.Write((byte)prc);
+                writer.Write((ushort)fpr);
+                writer.Write((ushort)0); // pad
+
                 runningTriRefOffset += _roomTriRefs[i].Count;
             }
 
             // Catch-all room (always rendered) — written as an extra "room" entry
             {
-                // Catch-all AABB: max world extents
+                int catchAllRoomIdx = _rooms.Length; // index of catch-all in cell arrays
                 writer.Write(PSXTrig.ConvertWorldToFixed12(-1000f / gteScaling));
                 writer.Write(PSXTrig.ConvertWorldToFixed12(-1000f / gteScaling));
                 writer.Write(PSXTrig.ConvertWorldToFixed12(-1000f / gteScaling));
@@ -381,41 +647,50 @@ namespace SplashEdit.RuntimeCode
                 writer.Write(PSXTrig.ConvertWorldToFixed12(1000f / gteScaling));
                 writer.Write((ushort)runningTriRefOffset);
                 writer.Write((ushort)_catchAllTriRefs.Count);
-                writer.Write((uint)0);
+
+                int fc = (_roomFirstCell != null && catchAllRoomIdx < _roomFirstCell.Length)
+                    ? _roomFirstCell[catchAllRoomIdx] : 0;
+                int cc = (_roomCellCount != null && catchAllRoomIdx < _roomCellCount.Length)
+                    ? _roomCellCount[catchAllRoomIdx] : 0;
+                writer.Write((ushort)fc);
+                writer.Write((byte)cc);
+
+                // Catch-all has no portals
+                int prc = (_roomPortalRefCount != null && catchAllRoomIdx < _roomPortalRefCount.Length)
+                    ? _roomPortalRefCount[catchAllRoomIdx] : 0;
+                int fpr = (_roomFirstPortalRef != null && catchAllRoomIdx < _roomFirstPortalRef.Length)
+                    ? _roomFirstPortalRef[catchAllRoomIdx] : 0;
+                writer.Write((byte)prc);
+                writer.Write((ushort)fpr);
+                writer.Write((ushort)0); // pad
             }
 
-            // Per-portal data (40 bytes each):
-            // roomA(2) + roomB(2) + center(12) + halfW(2) + halfH(2) +
-            // normal(6) + pad(2) + right(6) + up(6)
+            // Per-portal data (40 bytes each)
             foreach (var portal in _portals)
             {
                 writer.Write((ushort)portal.roomA);
                 writer.Write((ushort)portal.roomB);
-                // Center of portal (PS1 coords: negate Y)
                 writer.Write(PSXTrig.ConvertWorldToFixed12(portal.center.x / gteScaling));
                 writer.Write(PSXTrig.ConvertWorldToFixed12(-portal.center.y / gteScaling));
                 writer.Write(PSXTrig.ConvertWorldToFixed12(portal.center.z / gteScaling));
-                // Portal half-size in GTE units (fp12)
                 float halfW = portal.portalSize.x * 0.5f;
                 float halfH = portal.portalSize.y * 0.5f;
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(halfW / gteScaling * 4096f), 1, 32767));
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(halfH / gteScaling * 4096f), 1, 32767));
-                // Portal facing normal (PS1 coords: negate Y) - 4.12 fixed-point unit vector
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(portal.normal.x * 4096f), -32768, 32767));
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(-portal.normal.y * 4096f), -32768, 32767));
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(portal.normal.z * 4096f), -32768, 32767));
                 writer.Write((short)0); // pad
-                // Portal right axis (PS1 coords: negate Y) - 4.12 fixed-point unit vector
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(portal.right.x * 4096f), -32768, 32767));
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(-portal.right.y * 4096f), -32768, 32767));
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(portal.right.z * 4096f), -32768, 32767));
-                // Portal up axis (PS1 coords: negate Y) - 4.12 fixed-point unit vector
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(portal.up.x * 4096f), -32768, 32767));
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(-portal.up.y * 4096f), -32768, 32767));
                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(portal.up.z * 4096f), -32768, 32767));
             }
 
-            // Triangle refs (4 bytes each) — rooms in order, then catch-all
+            // Triangle refs (4 bytes each) — rooms in order, then catch-all.
+            // After GenerateCells, tri-refs are already ordered by cell within each room.
             for (int i = 0; i < _rooms.Length; i++)
             {
                 foreach (var triRef in _roomTriRefs[i])
@@ -429,15 +704,68 @@ namespace SplashEdit.RuntimeCode
                 writer.Write(triRef.objectIndex);
                 writer.Write(triRef.triangleIndex);
             }
+
+            // Room cells (28 bytes each): AABB (24) + firstTriRef (2) + triRefCount (2)
+            // Cell tri-ref indices are global (into the flat tri-ref array written above).
+            // We compute them by walking through rooms and their cells.
+            {
+                int globalTriRefBase = 0;
+                int cellWritten = 0;
+                for (int ri = 0; ri < totalRooms; ri++)
+                {
+                    List<BVH.TriangleRef> roomRefs = (ri < _rooms.Length)
+                        ? _roomTriRefs[ri] : _catchAllTriRefs;
+
+                    int cellStart = (_roomFirstCell != null && ri < _roomFirstCell.Length)
+                        ? _roomFirstCell[ri] : 0;
+                    int cellCount = (_roomCellCount != null && ri < _roomCellCount.Length)
+                        ? _roomCellCount[ri] : 0;
+
+                    int localOffset = 0;
+                    for (int ci = 0; ci < cellCount; ci++)
+                    {
+                        var cell = _allCells[cellStart + ci];
+                        Bounds cb = cell.bounds;
+                        int cellTriCount = cell.triRefs.Count;
+
+                        // Write cell AABB in PS1 coords (negate Y, swap min/max Y)
+                        writer.Write(PSXTrig.ConvertWorldToFixed12(cb.min.x / gteScaling));
+                        writer.Write(PSXTrig.ConvertWorldToFixed12(-cb.max.y / gteScaling));
+                        writer.Write(PSXTrig.ConvertWorldToFixed12(cb.min.z / gteScaling));
+                        writer.Write(PSXTrig.ConvertWorldToFixed12(cb.max.x / gteScaling));
+                        writer.Write(PSXTrig.ConvertWorldToFixed12(-cb.min.y / gteScaling));
+                        writer.Write(PSXTrig.ConvertWorldToFixed12(cb.max.z / gteScaling));
+
+                        writer.Write((ushort)(globalTriRefBase + localOffset));
+                        writer.Write((ushort)cellTriCount);
+
+                        localOffset += cellTriCount;
+                        cellWritten++;
+                    }
+
+                    globalTriRefBase += roomRefs.Count;
+                }
+            }
+
+            // Per-room portal references (4 bytes each): portalIndex (2) + otherRoom (2)
+            // Written in flat order matching _allPortalRefs. Each room's RoomData has
+            // firstPortalRef + portalRefCount pointing into this array.
+            foreach (var pref in _allPortalRefs)
+            {
+                writer.Write(pref.portalIndex);
+                writer.Write(pref.otherRoom);
+            }
         }
 
         public int GetBinarySize()
         {
             if (_rooms == null || _rooms.Length == 0) return 0;
-            int roomDataSize = (_rooms.Length + 1) * 32; // +1 for catch-all
+            int roomDataSize = (_rooms.Length + 1) * 36; // +1 for catch-all, 36 bytes each
             int portalDataSize = _portals.Count * 40;
             int triRefSize = TotalTriRefCount * 4;
-            return roomDataSize + portalDataSize + triRefSize;
+            int cellSize = _allCells.Count * 28;
+            int portalRefSize = _allPortalRefs.Count * 4;
+            return roomDataSize + portalDataSize + triRefSize + cellSize + portalRefSize;
         }
     }
 }
