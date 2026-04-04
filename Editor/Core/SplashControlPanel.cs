@@ -1622,9 +1622,7 @@ namespace SplashEdit.EditorCode
             var psi = new ProcessStartInfo
             {
                 FileName = Application.platform == RuntimePlatform.WindowsEditor ? "cmd.exe" : "/bin/bash",
-                Arguments = Application.platform == RuntimePlatform.WindowsEditor
-                    ? $"/c \"cd /d \"{luacDir}\" && {makeCmd}\""
-                    : $"-c \"cd \\\"{luacDir}\\\" && {makeCmd}\"",
+                Arguments = WrapCommandForMacOS(luacDir, makeCmd),
                 WorkingDirectory = luacDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -1737,9 +1735,7 @@ namespace SplashEdit.EditorCode
             var psi = new ProcessStartInfo
             {
                 FileName = Application.platform == RuntimePlatform.WindowsEditor ? "cmd.exe" : "/bin/bash",
-                Arguments = Application.platform == RuntimePlatform.WindowsEditor
-                    ? $"/c \"cd /d \"{nativeDir}\" && {makeCmd}\""
-                    : $"-c \"cd \\\"{nativeDir}\\\" && {makeCmd}\"",
+                Arguments = WrapCommandForMacOS(nativeDir, makeCmd),
                 WorkingDirectory = nativeDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -2238,6 +2234,21 @@ namespace SplashEdit.EditorCode
         // ═══════════════════════════════════════════════════════════════
         // Toolchain Detection & Install
         // ═══════════════════════════════════════════════════════════════
+
+        private static string WrapCommandForMacOS(string dir, string makeCmd)
+        {
+            if (Application.platform == RuntimePlatform.WindowsEditor)
+                return $"/c \"cd /d \"{dir}\" && {makeCmd}\"";
+
+            string pathExport = "";
+            if (Application.platform == RuntimePlatform.OSXEditor)
+            {
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                pathExport = $"export PATH=\\\"{home}/mipsel-none-elf/bin:{home}/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\\\" && ";
+            }
+
+            return $"-c \"{pathExport}cd \\\"{dir}\\\" && {makeCmd}\"";
+        }
 
         private void RefreshToolchainStatus()
         {
