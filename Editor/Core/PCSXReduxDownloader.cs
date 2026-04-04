@@ -44,6 +44,8 @@ namespace SplashEdit.EditorCode
                     return "dev-win-cli-x64"; 
                 case RuntimePlatform.LinuxEditor:
                     return "dev-linux-x64";
+                case RuntimePlatform.OSXEditor:
+                    return "dev-macos-arm";
                 default:
                     return "dev-win-cli-x64";
             }
@@ -119,7 +121,8 @@ namespace SplashEdit.EditorCode
                     Directory.Delete(installDir, true);
                 Directory.CreateDirectory(installDir);
 
-                if (Application.platform == RuntimePlatform.LinuxEditor && tempFile.EndsWith(".tar.gz"))
+                if ((Application.platform == RuntimePlatform.LinuxEditor ||
+                     Application.platform == RuntimePlatform.OSXEditor) && tempFile.EndsWith(".tar.gz"))
                 {
                     var psi = new ProcessStartInfo
                     {
@@ -140,7 +143,8 @@ namespace SplashEdit.EditorCode
 
                 // Make executable
 
-                if(Application.platform == RuntimePlatform.LinuxEditor) {
+                if(Application.platform == RuntimePlatform.LinuxEditor ||
+                   Application.platform == RuntimePlatform.OSXEditor) {
                     var psi = new ProcessStartInfo
                     {
                         FileName = "chmod",
