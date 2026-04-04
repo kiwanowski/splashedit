@@ -41,6 +41,24 @@ public static class ToolchainChecker
 
         try
         {
+            // macOS GUI apps have restricted PATH — check common locations directly
+            if (Application.platform == RuntimePlatform.OSXEditor)
+            {
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                string[] searchPaths = new[] {
+                    Path.Combine(home, "mipsel-none-elf", "bin"),
+                    "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"
+                };
+                string[] variants = toolName.Contains("mipsel-linux-gnu")
+                    ? new[] { toolName, toolName.Replace("mipsel-linux-gnu", "mipsel-none-elf") }
+                    : toolName.Contains("mipsel-none-elf")
+                    ? new[] { toolName, toolName.Replace("mipsel-none-elf", "mipsel-linux-gnu") }
+                    : new[] { toolName };
+                foreach (var dir in searchPaths)
+                    foreach (var variant in variants)
+                        if (File.Exists(Path.Combine(dir, variant)))
+                            return true;
+            }
             Process process = new Process
             {
                 StartInfo = new ProcessStartInfo
