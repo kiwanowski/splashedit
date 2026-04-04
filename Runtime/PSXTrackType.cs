@@ -12,5 +12,6 @@ namespace SplashEdit.RuntimeCode
         UIProgress = 7,
         UIPosition = 8,
         UIColor = 9,
+        CameraH = 10,
     }
 }

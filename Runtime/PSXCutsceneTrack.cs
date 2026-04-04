@@ -30,5 +30,10 @@ namespace SplashEdit.RuntimeCode
 
         /// <summary>Returns true if this track type targets a UI element (not just a canvas).</summary>
         public bool IsUIElementTrack => TrackType >= PSXTrackType.UIElementVisible && TrackType <= PSXTrackType.UIColor;
+
+        /// <summary>Returns true if this is a camera track (position, rotation, or H).</summary>
+        public bool IsCameraTrack => TrackType == PSXTrackType.CameraPosition ||
+                                     TrackType == PSXTrackType.CameraRotation ||
+                                     TrackType == PSXTrackType.CameraH;
     }
 }

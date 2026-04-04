@@ -262,6 +262,15 @@ namespace SplashEdit.RuntimeCode
                                 writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(kf.Value.z), 0, 255));
                                 break;
                             }
+                            case PSXTrackType.CameraH:
+                            {
+                                // values[0] = H register value (projection distance), 1-1024
+                                short h = (short)Mathf.Clamp(Mathf.RoundToInt(kf.Value.x), 1, 1024);
+                                writer.Write(h);
+                                writer.Write((short)0);
+                                writer.Write((short)0);
+                                break;
+                            }
                         }
                     }
 
@@ -370,7 +379,9 @@ namespace SplashEdit.RuntimeCode
         /// </summary>
         private static string GetTrackTargetName(PSXCutsceneTrack track)
         {
-            bool isCameraTrack = track.TrackType == PSXTrackType.CameraPosition || track.TrackType == PSXTrackType.CameraRotation;
+            bool isCameraTrack = track.TrackType == PSXTrackType.CameraPosition ||
+                                 track.TrackType == PSXTrackType.CameraRotation ||
+                                 track.TrackType == PSXTrackType.CameraH;
             if (isCameraTrack) return "";
 
             string name;

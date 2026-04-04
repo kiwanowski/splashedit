@@ -10,6 +10,7 @@ namespace SplashEdit.RuntimeCode
     ///   CameraRotation: Euler angles in degrees (x=pitch, y=yaw, z=roll)
     ///   ObjectRotation: y component = rotation in degrees
     ///   ObjectActive: x component = 0.0 (inactive) or 1.0 (active)
+    ///   CameraH: x component = H register value (projection distance, 1-1024)
     /// </summary>
     [Serializable]
     public class PSXKeyframe

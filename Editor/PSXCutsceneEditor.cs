@@ -23,7 +23,8 @@ namespace SplashEdit.RuntimeCode
         private Vector3 _savedPivot;
         private Quaternion _savedRotation;
         private float _savedSize;
- 
+        private float _savedFOV;
+
         // Saved object transforms
         private Dictionary<string, Vector3> _savedObjectPositions = new Dictionary<string, Vector3>();
         private Dictionary<string, Quaternion> _savedObjectRotations = new Dictionary<string, Quaternion>();
@@ -31,6 +32,21 @@ namespace SplashEdit.RuntimeCode
 
         // Audio preview
         private Dictionary<string, AudioClip> _audioClipCache = new Dictionary<string, AudioClip>();
+
+        // ── PSX H register ↔ Unity FOV conversion ──
+        // PS1 screen is 320×240. H = projection plane distance.
+        // verticalFOV = 2 * atan(120 / H)  →  H = 120 / tan(vFOV/2)
+        private const float PSX_HALF_HEIGHT = 120f;
+        private static float HToFOV(float h)
+        {
+            if (h <= 0f) h = 1f;
+            return 2f * Mathf.Atan(PSX_HALF_HEIGHT / h) * Mathf.Rad2Deg;
+        }
+        private static float FOVToH(float fovDeg)
+        {
+            float half = Mathf.Clamp(fovDeg, 1f, 179f) * 0.5f * Mathf.Deg2Rad;
+            return PSX_HALF_HEIGHT / Mathf.Tan(half);
+        }
 
         private void OnEnable()
         {
@@ -135,7 +151,9 @@ namespace SplashEdit.RuntimeCode
                     removeTrackIdx = ti;
                 EditorGUILayout.EndHorizontal();
 
-                bool isCameraTrack = track.TrackType == PSXTrackType.CameraPosition || track.TrackType == PSXTrackType.CameraRotation;
+                bool isCameraTrack = track.TrackType == PSXTrackType.CameraPosition ||
+                                     track.TrackType == PSXTrackType.CameraRotation ||
+                                     track.TrackType == PSXTrackType.CameraH;
                 bool isUITrack = track.IsUITrack;
                 bool isUIElementTrack = track.IsUIElementTrack;
 
@@ -195,8 +213,14 @@ namespace SplashEdit.RuntimeCode
                         {
                             var sv = SceneView.lastActiveSceneView;
                             if (sv != null)
-                                kf.Value = track.TrackType == PSXTrackType.CameraPosition
-                                    ? sv.camera.transform.position : sv.camera.transform.eulerAngles;
+                            {
+                                if (track.TrackType == PSXTrackType.CameraPosition)
+                                    kf.Value = sv.camera.transform.position;
+                                else if (track.TrackType == PSXTrackType.CameraRotation)
+                                    kf.Value = sv.camera.transform.eulerAngles;
+                                else if (track.TrackType == PSXTrackType.CameraH)
+                                    kf.Value = new Vector3(Mathf.Round(FOVToH(sv.camera.fieldOfView)), 0, 0);
+                            }
                             else Debug.LogWarning("No active Scene View.");
                         }
                     }
@@ -262,6 +286,15 @@ namespace SplashEdit.RuntimeCode
                             kf.Value = new Vector3(r, g, b);
                             break;
                         }
+                        case PSXTrackType.CameraH:
+                        {
+                            // H register value (projection distance) with FOV preview
+                            float h = EditorGUILayout.Slider("H Register", kf.Value.x, 30f, 600f);
+                            kf.Value = new Vector3(Mathf.Round(h), 0, 0);
+                            float fov = HToFOV(h);
+                            EditorGUILayout.LabelField($"  \u2248 {fov:F1}\u00b0 vertical FOV", EditorStyles.miniLabel);
+                            break;
+                        }
                         default:
                             kf.Value = EditorGUILayout.Vector3Field("Value", kf.Value);
                             break;
@@ -292,8 +325,14 @@ namespace SplashEdit.RuntimeCode
                         var sv = SceneView.lastActiveSceneView;
                         Vector3 val = Vector3.zero;
                         if (sv != null)
-                            val = track.TrackType == PSXTrackType.CameraPosition
-                                ? sv.camera.transform.position : sv.camera.transform.eulerAngles;
+                        {
+                            if (track.TrackType == PSXTrackType.CameraPosition)
+                                val = sv.camera.transform.position;
+                            else if (track.TrackType == PSXTrackType.CameraRotation)
+                                val = sv.camera.transform.eulerAngles;
+                            else if (track.TrackType == PSXTrackType.CameraH)
+                                val = new Vector3(Mathf.Round(FOVToH(sv.camera.fieldOfView)), 0, 0);
+                        }
                         int frame = track.Keyframes.Count > 0 ? track.Keyframes[track.Keyframes.Count - 1].Frame + 15 : 0;
                         track.Keyframes.Add(new PSXKeyframe { Frame = frame, Value = val });
                     }
@@ -481,6 +520,7 @@ namespace SplashEdit.RuntimeCode
                 _savedPivot = sv.pivot;
                 _savedRotation = sv.rotation;
                 _savedSize = sv.size;
+                _savedFOV = sv.cameraSettings.fieldOfView;
             }
 
             // Save object transforms
@@ -492,7 +532,7 @@ namespace SplashEdit.RuntimeCode
                 foreach (var track in clip.Tracks)
                 {
                     if (string.IsNullOrEmpty(track.ObjectName)) continue;
-                    bool isCam = track.TrackType == PSXTrackType.CameraPosition || track.TrackType == PSXTrackType.CameraRotation;
+                    bool isCam = track.IsCameraTrack;
                     if (isCam) continue;
 
                     var go = GameObject.Find(track.ObjectName);
@@ -530,6 +570,7 @@ namespace SplashEdit.RuntimeCode
                     sv.pivot = _savedPivot;
                     sv.rotation = _savedRotation;
                     sv.size = _savedSize;
+                    sv.cameraSettings.fieldOfView = _savedFOV;
                     sv.Repaint();
                 }
                 _hasSavedSceneView = false;
@@ -567,6 +608,7 @@ namespace SplashEdit.RuntimeCode
             var sv = SceneView.lastActiveSceneView;
             Vector3? camPos = null;
             Quaternion? camRot = null;
+            float? camH = null;
 
             if (clip.Tracks != null)
             {
@@ -583,6 +625,10 @@ namespace SplashEdit.RuntimeCode
                             break;
                         case PSXTrackType.CameraRotation:
                             initialVal = _savedRotation.eulerAngles;
+                            break;
+                        case PSXTrackType.CameraH:
+                            // Initial H from saved scene view FOV
+                            initialVal = new Vector3(FOVToH(_savedFOV), 0, 0);
                             break;
                         case PSXTrackType.ObjectPosition:
                             if (_savedObjectPositions.ContainsKey(track.ObjectName ?? ""))
@@ -617,6 +663,9 @@ namespace SplashEdit.RuntimeCode
                         case PSXTrackType.CameraRotation:
                             camRot = Quaternion.Euler(val);
                             break;
+                        case PSXTrackType.CameraH:
+                            camH = val.x;
+                            break;
                         case PSXTrackType.ObjectPosition:
                         {
                             var go = GameObject.Find(track.ObjectName);
@@ -647,7 +696,7 @@ namespace SplashEdit.RuntimeCode
             }
 
             // Drive scene view camera
-            if (sv != null && (camPos.HasValue || camRot.HasValue))
+            if (sv != null && (camPos.HasValue || camRot.HasValue || camH.HasValue))
             {
                 Vector3 pos = camPos ?? sv.camera.transform.position;
                 Quaternion rot = camRot ?? sv.camera.transform.rotation;
@@ -655,6 +704,14 @@ namespace SplashEdit.RuntimeCode
                 // SceneView needs pivot and rotation set — pivot = position + forward * size
                 sv.rotation = rot;
                 sv.pivot = pos + rot * Vector3.forward * sv.cameraDistance;
+
+                // Apply FOV from H register value
+                if (camH.HasValue)
+                {
+                    float h = Mathf.Clamp(camH.Value, 1f, 1024f);
+                    sv.cameraSettings.fieldOfView = HToFOV(h);
+                }
+
                 sv.Repaint();
             }
 
