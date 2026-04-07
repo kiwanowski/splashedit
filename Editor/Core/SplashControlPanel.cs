@@ -1206,7 +1206,7 @@ namespace SplashEdit.EditorCode
                 }
                 catch (Exception ex)
                 {
-                    Log($"Error exporting '{scene.name}': {ex.Message}", LogType.Error);
+                    Log($"Error exporting '{scene.name}': {ex}", LogType.Error);
                     success = false;
                 }
             }

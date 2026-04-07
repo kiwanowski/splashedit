@@ -37,6 +37,7 @@ namespace SplashEdit.RuntimeCode
         public long nameTableBytes;
         public long audioMetadataBytes;
         public long audioDataBytes;
+        public long skinnedMeshBytes;
 
         // ---- Counts ----
         public int objectCount;
@@ -47,6 +48,7 @@ namespace SplashEdit.RuntimeCode
         public int navRegionCount;
         public int roomCount;
         public int portalCount;
+        public int skinnedMeshCount;
 
         // ---- Main RAM estimate ----
         // Renderer double-buffered overhead (ordering tables + bump allocators)
@@ -70,7 +72,8 @@ namespace SplashEdit.RuntimeCode
             bvhBytes + interactableBytes + collisionBytes + navRegionBytes +
             roomPortalBytes + atlasMetadataBytes + clutMetadataBytes +
             meshDataBytes + atlasPixelBytes + clutDataBytes +
-            nameTableBytes + audioMetadataBytes + audioDataBytes;
+            nameTableBytes + audioMetadataBytes + audioDataBytes +
+            skinnedMeshBytes;
 
         /// <summary>
         /// Total Main RAM usage estimate. Splashpack data is loaded into heap at runtime.
@@ -112,8 +115,10 @@ namespace SplashEdit.RuntimeCode
                 segments.Add(new BarSegment { label = "Texture Data", bytes = atlasPixelBytes, color = new Color(0.95f, 0.75f, 0.2f) });
             if (audioDataBytes > 0)
                 segments.Add(new BarSegment { label = "Audio Data", bytes = audioDataBytes, color = new Color(0.85f, 0.3f, 0.65f) });
+            if (skinnedMeshBytes > 0)
+                segments.Add(new BarSegment { label = "Skinned Mesh", bytes = skinnedMeshBytes, color = new Color(0.7f, 0.4f, 0.85f) });
 
-            long otherSplashpack = TotalSplashpackBytes - meshDataBytes - atlasPixelBytes - audioDataBytes;
+            long otherSplashpack = TotalSplashpackBytes - meshDataBytes - atlasPixelBytes - audioDataBytes - skinnedMeshBytes;
             if (otherSplashpack > 0)
                 segments.Add(new BarSegment { label = "Scene Metadata", bytes = otherSplashpack, color = new Color(0.6f, 0.6f, 0.65f) });
 

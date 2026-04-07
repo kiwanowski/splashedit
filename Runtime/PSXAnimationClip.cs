@@ -20,5 +20,8 @@ namespace SplashEdit.RuntimeCode
 
         [Tooltip("Tracks driving object/UI properties over time. Camera tracks are not allowed.")]
         public List<PSXCutsceneTrack> Tracks = new List<PSXCutsceneTrack>();
+
+        [Tooltip("Skinned mesh animation events triggered at specific frames.")]
+        public List<PSXSkinAnimEvent> SkinAnimEvents = new List<PSXSkinAnimEvent>();
     }
 }

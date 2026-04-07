@@ -17,6 +17,7 @@ namespace SplashEdit.RuntimeCode
         private const int MAX_TRACKS = 8;
         private const int MAX_KEYFRAMES = 64;
         private const int MAX_AUDIO_EVENTS = 64;
+        private const int MAX_SKIN_ANIM_EVENTS = 16;
         private const int MAX_NAME_LEN = 24;
 
         /// <summary>
@@ -46,6 +47,7 @@ namespace SplashEdit.RuntimeCode
             PSXCutsceneClip[] cutscenes,
             PSXObjectExporter[] exporters,
             PSXAudioClip[] audioSources,
+            PSXSkinnedObjectExporter[] skinnedExporters,
             float gteScaling,
             out long cutsceneTableStart,
             Action<string, LogType> log = null)
@@ -128,9 +130,42 @@ namespace SplashEdit.RuntimeCode
                 // Sort audio events by frame (required for linear scan on PS1)
                 validEvents.Sort((a, b) => a.Frame.CompareTo(b.Frame));
 
-                // SPLASHPACKCutscene: 12 bytes
+                // Validate and collect skin anim events
+                List<PSXSkinAnimEvent> validSkinAnims = new List<PSXSkinAnimEvent>();
+                if (clip.SkinAnimEvents != null && skinnedExporters != null)
+                {
+                    foreach (var evt in clip.SkinAnimEvents)
+                    {
+                        bool found = false;
+                        foreach (var skinExp in skinnedExporters)
+                        {
+                            if (skinExp.gameObject.name == evt.TargetObjectName)
+                            {
+                                // Validate clip name exists
+                                bool clipFound = false;
+                                for (int c = 0; c < skinExp.AnimationClips.Length; c++)
+                                {
+                                    if (skinExp.AnimationClips[c] != null && skinExp.AnimationClips[c].name == evt.ClipName)
+                                    { clipFound = true; break; }
+                                }
+                                if (clipFound) { found = true; break; }
+                                else
+                                    log?.Invoke($"Cutscene '{clip.CutsceneName}': skin anim clip '{evt.ClipName}' not found on '{evt.TargetObjectName}'. Skipping.", LogType.Warning);
+                            }
+                        }
+                        if (found) validSkinAnims.Add(evt);
+                        else if (!found)
+                            log?.Invoke($"Cutscene '{clip.CutsceneName}': skinned object '{evt.TargetObjectName}' not found. Skipping skin anim event.", LogType.Warning);
+                        if (validSkinAnims.Count >= MAX_SKIN_ANIM_EVENTS) break;
+                    }
+                }
+                validSkinAnims.Sort((a, b) => a.Frame.CompareTo(b.Frame));
+                int skinAnimEventCount = validSkinAnims.Count;
+
+                // SPLASHPACKCutscene: 20 bytes (v19: added skin anim events)
                 long tracksOffsetPlaceholder;
                 long audioEventsOffsetPlaceholder;
+                long skinAnimEventsOffsetPlaceholder;
 
                 writer.Write((ushort)clip.DurationFrames);
                 writer.Write((byte)trackCount);
@@ -139,6 +174,13 @@ namespace SplashEdit.RuntimeCode
                 writer.Write((uint)0);  // tracksOffset placeholder
                 audioEventsOffsetPlaceholder = writer.BaseStream.Position;
                 writer.Write((uint)0);  // audioEventsOffset placeholder
+                // v19 extension: skin anim events
+                writer.Write((byte)skinAnimEventCount);
+                writer.Write((byte)0);  // pad
+                writer.Write((byte)0);  // pad
+                writer.Write((byte)0);  // pad
+                skinAnimEventsOffsetPlaceholder = writer.BaseStream.Position;
+                writer.Write((uint)0);  // skinAnimEventsOffset placeholder
 
                 // ── Tracks ──
                 AlignToFourBytes(writer);
@@ -201,22 +243,14 @@ namespace SplashEdit.RuntimeCode
                                 break;
                             }
                             case PSXTrackType.CameraRotation:
-                            {
-                                // Rotation: degrees → psyqo::Angle raw (pi-units)
-                                short rx = DegreesToAngleRaw(kf.Value.x);
-                                short ry = DegreesToAngleRaw(kf.Value.y);
-                                short rz = DegreesToAngleRaw(kf.Value.z);
-                                writer.Write(rx);
-                                writer.Write(ry);
-                                writer.Write(rz);
-                                break;
-                            }
                             case PSXTrackType.ObjectRotation:
                             {
-                                // Full XYZ rotation in degrees -> pi-units
-                                short rx = DegreesToAngleRaw(kf.Value.x);
+                                // Rotation: degrees → psyqo::Angle raw (pi-units)
+                                // Negate X (pitch) and Z (roll) to compensate for the
+                                // Y-axis flip between Unity (Y-up) and PSX (Y-down).
+                                short rx = DegreesToAngleRaw(-kf.Value.x);
                                 short ry = DegreesToAngleRaw(kf.Value.y);
-                                short rz = DegreesToAngleRaw(kf.Value.z);
+                                short rz = DegreesToAngleRaw(-kf.Value.z);
                                 writer.Write(rx);
                                 writer.Write(ry);
                                 writer.Write(rz);
@@ -320,6 +354,41 @@ namespace SplashEdit.RuntimeCode
                     writer.Write((byte)0); // pad
                 }
 
+                // ── Skin anim events (v19) ──
+                AlignToFourBytes(writer);
+                long skinAnimEventsStart = writer.BaseStream.Position;
+
+                foreach (var evt in validSkinAnims)
+                {
+                    // Resolve target object → skinned mesh index
+                    byte meshIdx = 0;
+                    byte clipIdx2 = 0;
+                    if (skinnedExporters != null)
+                    {
+                        for (int si = 0; si < skinnedExporters.Length; si++)
+                        {
+                            if (skinnedExporters[si].gameObject.name == evt.TargetObjectName)
+                            {
+                                meshIdx = (byte)si;
+                                for (int c = 0; c < skinnedExporters[si].AnimationClips.Length; c++)
+                                {
+                                    if (skinnedExporters[si].AnimationClips[c] != null &&
+                                        skinnedExporters[si].AnimationClips[c].name == evt.ClipName)
+                                    { clipIdx2 = (byte)c; break; }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    writer.Write((ushort)evt.Frame);
+                    writer.Write(meshIdx);
+                    writer.Write(clipIdx2);
+                    writer.Write((byte)(evt.Loop ? 1 : 0));
+                    writer.Write((byte)0); // pad
+                    writer.Write((byte)0); // pad
+                    writer.Write((byte)0); // pad
+                }
+
                 // ── Cutscene name string ──
                 string csName = clip.CutsceneName ?? "unnamed";
                 if (csName.Length > MAX_NAME_LEN) csName = csName.Substring(0, MAX_NAME_LEN);
@@ -343,6 +412,14 @@ namespace SplashEdit.RuntimeCode
                     // audioEventsOffset
                     writer.Seek((int)audioEventsOffsetPlaceholder, SeekOrigin.Begin);
                     writer.Write((uint)(audioEventCount > 0 ? audioEventsStart : 0));
+                    writer.Seek((int)curPos, SeekOrigin.Begin);
+                }
+                {
+                    long curPos = writer.BaseStream.Position;
+
+                    // skinAnimEventsOffset (v19)
+                    writer.Seek((int)skinAnimEventsOffsetPlaceholder, SeekOrigin.Begin);
+                    writer.Write((uint)(skinAnimEventCount > 0 ? skinAnimEventsStart : 0));
                     writer.Seek((int)curPos, SeekOrigin.Begin);
                 }
 

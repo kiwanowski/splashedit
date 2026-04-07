@@ -24,5 +24,8 @@ namespace SplashEdit.RuntimeCode
 
         [Tooltip("Audio events triggered at specific frames.")]
         public List<PSXAudioEvent> AudioEvents = new List<PSXAudioEvent>();
+
+        [Tooltip("Skinned mesh animation events triggered at specific frames.")]
+        public List<PSXSkinAnimEvent> SkinAnimEvents = new List<PSXSkinAnimEvent>();
     }
 }

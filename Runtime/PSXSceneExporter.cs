@@ -60,6 +60,10 @@ namespace SplashEdit.RuntimeCode
         private PSXObjectExporter[] _exporters;
         private TextureAtlas[] _atlases;
 
+        // Skinned mesh export data
+        private PSXSkinnedObjectExporter[] _skinnedExporters;
+        private PSXSkinnedMeshExporter.BakedSkinData[] _bakedSkinData;
+
         // Component arrays
         private PSXInteractable[] _interactables;
         private PSXAudioClip[] _audioSources;
@@ -136,7 +140,70 @@ namespace SplashEdit.RuntimeCode
 #if UNITY_EDITOR
             _psxData = DataStorage.LoadData(out selectedResolution, out dualBuffering, out verticalLayout, out prohibitedAreas);
 
-            _exporters = FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
+            // Destroy any stale proxy objects from previous exports that may have leaked
+            // (e.g. if a prior export threw an exception before cleanup, or the proxy used
+            //  non-DontSave HideFlags and got saved into the scene).
+            foreach (var staleExp in FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None))
+            {
+                if (staleExp.gameObject.hideFlags != HideFlags.None)
+                    DestroyImmediate(staleExp.gameObject);
+            }
+
+            // Discover and prepare skinned mesh exporters first (creates proxy GameObjects
+            // with PSXObjectExporter that will be picked up by the FindObjectsByType below).
+            _skinnedExporters = FindObjectsByType<PSXSkinnedObjectExporter>(FindObjectsSortMode.None);
+
+            // Auto-switch Generic models to Humanoid if they have Humanoid animation clips.
+            // This MUST run before CreateProxy so the SkinnedMeshRenderer's mesh/bones are
+            // correct when the proxy is built and CreatePSXMesh later processes it.
+            foreach (var skinExp in _skinnedExporters)
+                PSXSkinnedMeshExporter.EnsureHumanoidImportIfNeeded(skinExp);
+
+            foreach (var skinExp in _skinnedExporters)
+                PSXSkinnedMeshExporter.CreateProxy(skinExp);
+
+            // Build exporters list. Collect the set of proxy exporters so we can
+            // deduplicate: some Unity versions include DontSave objects in
+            // FindObjectsByType, others don't. We filter them out, then add back
+            // exactly once at the end.
+            // Also exclude any PSXObjectExporter that lives on or under a
+            // PSXSkinnedObjectExporter — only the proxy should represent those meshes.
+            var proxySet = new System.Collections.Generic.HashSet<PSXObjectExporter>();
+            foreach (var skinExp in _skinnedExporters)
+            {
+                if (skinExp.ProxyExporter != null)
+                    proxySet.Add(skinExp.ProxyExporter);
+            }
+            var skinnedGOs = new System.Collections.Generic.HashSet<GameObject>();
+            foreach (var skinExp in _skinnedExporters)
+                skinnedGOs.Add(skinExp.gameObject);
+
+            var exportersList = new System.Collections.Generic.List<PSXObjectExporter>();
+            foreach (var exp in FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None))
+            {
+                if (proxySet.Contains(exp)) continue; // skip proxy (we add them at the end)
+
+                // Skip any exporter that sits on or under a skinned-object hierarchy
+                bool underSkinned = false;
+                Transform t = exp.transform;
+                while (t != null)
+                {
+                    if (skinnedGOs.Contains(t.gameObject)) { underSkinned = true; break; }
+                    t = t.parent;
+                }
+                if (underSkinned)
+                {
+                    Debug.Log($"[Export] Skipping PSXObjectExporter on '{exp.name}' — covered by PSXSkinnedObjectExporter proxy");
+                    continue;
+                }
+
+                exportersList.Add(exp);
+            }
+            // Append proxies at the end — guaranteed exactly once
+            exportersList.AddRange(proxySet);
+            _exporters = exportersList.ToArray();
+            try
+            {
             for (int i = 0; i < _exporters.Length; i++)
             {
                 PSXObjectExporter exp = _exporters[i];
@@ -237,7 +304,50 @@ namespace SplashEdit.RuntimeCode
                 }
             }
 
+            // Phase 6: Bake skinned mesh data
+            if (_skinnedExporters != null && _skinnedExporters.Length > 0)
+            {
+                Debug.Log($"[SkinExport] Found {_skinnedExporters.Length} PSXSkinnedObjectExporter(s), total exporters={_exporters.Length}");
+                // Record which exporter index each skinned mesh maps to
+                var skinDataList = new System.Collections.Generic.List<PSXSkinnedMeshExporter.BakedSkinData>();
+                foreach (var skinExp in _skinnedExporters)
+                {
+                    if (skinExp.ProxyExporter == null)
+                    {
+                        Debug.LogWarning($"[SkinExport] Skinned exporter '{skinExp.name}' has no ProxyExporter, skipping!");
+                        continue;
+                    }
+                    Debug.Log($"[SkinExport] Baking skin data for '{skinExp.name}' (proxy='{skinExp.ProxyExporter.name}')");
+                    var baked = PSXSkinnedMeshExporter.BakeSkinData(skinExp, _exporters, GTEScaling);
+                    if (baked != null)
+                    {
+                        skinDataList.Add(baked);
+                        Debug.Log($"[SkinExport] Baked OK: GOIndex={baked.GameObjectIndex}, bones={baked.BoneCount}, clips={baked.Clips.Count}, boneIndicesLen={baked.BoneIndices?.Length ?? 0}");
+                    }
+                    else
+                    {
+                        Debug.LogError($"[SkinExport] BakeSkinData returned null for '{skinExp.name}'!");
+                    }
+                }
+                _bakedSkinData = skinDataList.ToArray();
+                Debug.Log($"[SkinExport] Total baked skin data entries: {_bakedSkinData.Length}");
+            }
+            else
+            {
+                _bakedSkinData = null;
+            }
+
             ExportFile(outputPath);
+        }
+        finally
+        {
+            // Always clean up skinned mesh proxies, even if export threw an exception
+            if (_skinnedExporters != null)
+            {
+                foreach (var skinExp in _skinnedExporters)
+                    PSXSkinnedMeshExporter.DestroyProxy(skinExp);
+            }
+        }
 #endif
         }
 
@@ -331,6 +441,8 @@ namespace SplashEdit.RuntimeCode
                 canvases = _canvases,
                 fonts = _fonts,
                 triggerBoxes = _triggerBoxes,
+                bakedSkinData = _bakedSkinData,
+                skinnedExporters = _skinnedExporters,
             };
 
             PSXSceneWriter.Write(path, in scene, (msg, type) =>

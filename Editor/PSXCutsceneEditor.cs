@@ -11,6 +11,7 @@ namespace SplashEdit.RuntimeCode
     {
         // ── Preview state ──
         private bool _showAudioEvents = true;
+        private bool _showSkinAnimEvents = true;
         private bool _previewing;
         private bool _playing;
         private float _previewFrame;
@@ -32,6 +33,12 @@ namespace SplashEdit.RuntimeCode
 
         // Audio preview
         private Dictionary<string, AudioClip> _audioClipCache = new Dictionary<string, AudioClip>();
+
+        // Whether we started AnimationMode for skin anim preview
+        private bool _animModeStarted;
+        // Cache: for each skinned exporter name, the resolved Animator (or null for legacy path)
+        private Dictionary<string, Animator> _skinAnimatorCache = new Dictionary<string, Animator>();
+        private HashSet<string> _skinLegacyClips = new HashSet<string>(); // clips that use legacy path
 
         // ── PSX H register ↔ Unity FOV conversion ──
         // PS1 screen is 320×240. H = projection plane distance.
@@ -90,11 +97,12 @@ namespace SplashEdit.RuntimeCode
             if (!string.IsNullOrEmpty(clip.CutsceneName) && clip.CutsceneName.Length > 24)
                 EditorGUILayout.HelpBox("Name exceeds 24 characters and will be truncated on export.", MessageType.Warning);
 
-            clip.DurationFrames = EditorGUILayout.IntField("Duration (frames)", clip.DurationFrames);
-            if (clip.DurationFrames < 1) clip.DurationFrames = 1;
-
-            float seconds = clip.DurationFrames / 30f;
-            EditorGUILayout.LabelField($"  = {seconds:F2} seconds at 30fps", EditorStyles.miniLabel);
+            float durationSec = clip.DurationFrames / 30f;
+            EditorGUI.BeginChangeCheck();
+            durationSec = EditorGUILayout.FloatField("Duration (s)", durationSec);
+            if (EditorGUI.EndChangeCheck())
+                clip.DurationFrames = Mathf.Max(1, Mathf.RoundToInt(durationSec * 30f));
+            EditorGUILayout.LabelField($"  = {clip.DurationFrames} frames at 30 fps", EditorStyles.miniLabel);
 
             // ── Preview Controls ──
             EditorGUILayout.Space(6);
@@ -199,10 +207,16 @@ namespace SplashEdit.RuntimeCode
                 {
                     var kf = track.Keyframes[ki];
 
-                    // Row 1: frame number + interp mode + buttons
+                    // Row 1: time + interp mode + buttons
                     EditorGUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField("Frame", GUILayout.Width(42));
-                    kf.Frame = EditorGUILayout.IntField(kf.Frame, GUILayout.Width(60));
+                    EditorGUILayout.LabelField("Time (s)", GUILayout.Width(52));
+                    {
+                        float kfSec = kf.Frame / 30f;
+                        EditorGUI.BeginChangeCheck();
+                        kfSec = EditorGUILayout.FloatField(kfSec, GUILayout.Width(60));
+                        if (EditorGUI.EndChangeCheck())
+                            kf.Frame = Mathf.Max(0, Mathf.RoundToInt(kfSec * 30f));
+                    }
                     kf.Interp = (PSXInterpMode)EditorGUILayout.EnumPopup(kf.Interp, GUILayout.Width(80));
                     GUILayout.FlexibleSpace();
 
@@ -385,8 +399,14 @@ namespace SplashEdit.RuntimeCode
                     var evt = clip.AudioEvents[ei];
                     EditorGUILayout.BeginVertical("box");
                     EditorGUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField("Frame", GUILayout.Width(42));
-                    evt.Frame = EditorGUILayout.IntField(evt.Frame, GUILayout.Width(60));
+                    EditorGUILayout.LabelField("Time (s)", GUILayout.Width(52));
+                    {
+                        float aEvtSec = evt.Frame / 30f;
+                        EditorGUI.BeginChangeCheck();
+                        aEvtSec = EditorGUILayout.FloatField(aEvtSec, GUILayout.Width(60));
+                        if (EditorGUI.EndChangeCheck())
+                            evt.Frame = Mathf.Max(0, Mathf.RoundToInt(aEvtSec * 30f));
+                    }
                     GUILayout.FlexibleSpace();
                     if (GUILayout.Button("\u2212", GUILayout.Width(22)))
                         removeEventIdx = ei;
@@ -412,6 +432,76 @@ namespace SplashEdit.RuntimeCode
                 else
                 {
                     EditorGUILayout.HelpBox("Maximum 64 audio events per cutscene.", MessageType.Info);
+                }
+            }
+
+            // ── Skin Anim Events ──
+            EditorGUILayout.Space(8);
+            _showSkinAnimEvents = EditorGUILayout.Foldout(_showSkinAnimEvents, "Skin Anim Events", true);
+            if (_showSkinAnimEvents)
+            {
+                if (clip.SkinAnimEvents == null) clip.SkinAnimEvents = new List<PSXSkinAnimEvent>();
+
+                // Gather skinned exporters for validation / dropdowns
+                var skinnedExporters = Object.FindObjectsByType<PSXSkinnedObjectExporter>(FindObjectsSortMode.None);
+                var skinnedNames = new HashSet<string>();
+                var skinnedClipNames = new Dictionary<string, List<string>>();
+                foreach (var se in skinnedExporters)
+                {
+                    string sName = se.gameObject.name;
+                    skinnedNames.Add(sName);
+                    if (!skinnedClipNames.ContainsKey(sName))
+                        skinnedClipNames[sName] = new List<string>();
+                    if (se.AnimationClips != null)
+                        foreach (var ac in se.AnimationClips)
+                            if (ac != null) skinnedClipNames[sName].Add(ac.name);
+                }
+
+                int removeSkinEvtIdx = -1;
+                for (int ei = 0; ei < clip.SkinAnimEvents.Count; ei++)
+                {
+                    var evt = clip.SkinAnimEvents[ei];
+                    EditorGUILayout.BeginVertical("box");
+                    EditorGUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField("Time (s)", GUILayout.Width(52));
+                    {
+                        float sEvtSec = evt.Frame / 30f;
+                        EditorGUI.BeginChangeCheck();
+                        sEvtSec = EditorGUILayout.FloatField(sEvtSec, GUILayout.Width(60));
+                        if (EditorGUI.EndChangeCheck())
+                            evt.Frame = Mathf.Max(0, Mathf.RoundToInt(sEvtSec * 30f));
+                    }
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button("\u2212", GUILayout.Width(22)))
+                        removeSkinEvtIdx = ei;
+                    EditorGUILayout.EndHorizontal();
+
+                    evt.TargetObjectName = EditorGUILayout.TextField("Target Object", evt.TargetObjectName);
+                    if (!string.IsNullOrEmpty(evt.TargetObjectName) && !skinnedNames.Contains(evt.TargetObjectName))
+                        EditorGUILayout.HelpBox($"No PSXSkinnedObjectExporter found for '{evt.TargetObjectName}' in scene.", MessageType.Error);
+
+                    evt.ClipName = EditorGUILayout.TextField("Clip Name", evt.ClipName);
+                    if (!string.IsNullOrEmpty(evt.TargetObjectName) && !string.IsNullOrEmpty(evt.ClipName))
+                    {
+                        if (skinnedClipNames.TryGetValue(evt.TargetObjectName, out var clipNames) && !clipNames.Contains(evt.ClipName))
+                            EditorGUILayout.HelpBox($"No AnimationClip named '{evt.ClipName}' on '{evt.TargetObjectName}'.", MessageType.Error);
+                    }
+
+                    evt.Loop = EditorGUILayout.Toggle("Loop", evt.Loop);
+
+                    EditorGUILayout.EndVertical();
+                }
+
+                if (removeSkinEvtIdx >= 0) clip.SkinAnimEvents.RemoveAt(removeSkinEvtIdx);
+
+                if (clip.SkinAnimEvents.Count < 16)
+                {
+                    if (GUILayout.Button("+ Add Skin Anim Event"))
+                        clip.SkinAnimEvents.Add(new PSXSkinAnimEvent());
+                }
+                else
+                {
+                    EditorGUILayout.HelpBox("Maximum 16 skin anim events per cutscene.", MessageType.Info);
                 }
             }
 
@@ -474,21 +564,22 @@ namespace SplashEdit.RuntimeCode
 
             EditorGUILayout.EndHorizontal();
 
-            // Timeline scrubber
+            // Timeline scrubber (seconds)
+            float previewSec = _previewFrame / 30f;
+            float durationSecPv = clip.DurationFrames / 30f;
             EditorGUI.BeginChangeCheck();
-            float newFrame = EditorGUILayout.Slider("Frame", _previewFrame, 0, clip.DurationFrames);
+            float newSec = EditorGUILayout.Slider("Time (s)", previewSec, 0, durationSecPv);
             if (EditorGUI.EndChangeCheck())
             {
                 if (!_previewing) StartPreview(clip);
-                _previewFrame = newFrame;
+                _previewFrame = newSec * 30f;
                 _playing = false;
                 _firedAudioEventIndices.Clear();
                 ApplyPreview(clip);
             }
 
-            float previewSec = _previewFrame / 30f;
             EditorGUILayout.LabelField(
-                $"  {(int)_previewFrame} / {clip.DurationFrames}  ({previewSec:F2}s / {seconds(clip):F2}s)",
+                $"  {previewSec:F2}s / {durationSecPv:F2}s  (frame {(int)_previewFrame} / {clip.DurationFrames})",
                 EditorStyles.miniLabel);
 
             if (_previewing)
@@ -499,8 +590,6 @@ namespace SplashEdit.RuntimeCode
 
             EditorGUILayout.EndVertical();
         }
-
-        private static float seconds(PSXCutsceneClip clip) => clip.DurationFrames / 30f;
 
         // =====================================================================
         // Preview Lifecycle
@@ -553,6 +642,48 @@ namespace SplashEdit.RuntimeCode
             foreach (var a in audioSources)
                 if (!string.IsNullOrEmpty(a.ClipName) && a.Clip != null)
                     _audioClipCache[a.ClipName] = a.Clip;
+
+            // Prepare skinned mesh anim preview
+            _animModeStarted = false;
+            _skinAnimatorCache.Clear();
+            _skinLegacyClips.Clear();
+            if (clip.SkinAnimEvents != null && clip.SkinAnimEvents.Count > 0)
+            {
+                // Save transforms of skinned objects targeted by events so we can
+                // restore them when preview stops (Rebind / SampleAnimation can move them)
+                var skinTargetNames = new HashSet<string>();
+                foreach (var evt in clip.SkinAnimEvents)
+                    if (!string.IsNullOrEmpty(evt.TargetObjectName))
+                        skinTargetNames.Add(evt.TargetObjectName);
+
+                bool needsAnimMode = false;
+                var skinnedExporters = Object.FindObjectsByType<PSXSkinnedObjectExporter>(FindObjectsSortMode.None);
+                foreach (var se in skinnedExporters)
+                {
+                    string objName = se.gameObject.name;
+
+                    // Save transform for every skin-anim target
+                    if (skinTargetNames.Contains(objName) && !_savedObjectPositions.ContainsKey(objName))
+                    {
+                        _savedObjectPositions[objName] = se.transform.position;
+                        _savedObjectRotations[objName] = se.transform.rotation;
+                        _savedObjectActive[objName] = se.gameObject.activeSelf;
+                    }
+
+                    if (_skinAnimatorCache.ContainsKey(objName)) continue;
+
+                    // Pre-resolve the Animator for humanoid clips
+                    Animator resolved = ResolveAnimatorForSkinExp(se);
+                    _skinAnimatorCache[objName] = resolved; // null = legacy path
+                    if (resolved != null) needsAnimMode = true;
+                }
+
+                if (needsAnimMode && !AnimationMode.InAnimationMode())
+                {
+                    AnimationMode.StartAnimationMode();
+                    _animModeStarted = true;
+                }
+            }
         }
 
         private void StopPreview()
@@ -592,8 +723,122 @@ namespace SplashEdit.RuntimeCode
             _savedObjectRotations.Clear();
             _savedObjectActive.Clear();
 
+            // Restore skinned mesh poses via AnimationMode
+            if (_animModeStarted && AnimationMode.InAnimationMode())
+            {
+                AnimationMode.StopAnimationMode();
+                _animModeStarted = false;
+            }
+
             SceneView.RepaintAll();
             Repaint();
+        }
+
+        // =====================================================================
+        // Resolve the Animator target for a PSXSkinnedObjectExporter
+        // Matches the bone hierarchy root detection in PSXSkinnedMeshExporter.
+        // Returns null if the clip set is Generic/Legacy (no Animator needed).
+        // =====================================================================
+
+        private static Animator ResolveAnimatorForSkinExp(PSXSkinnedObjectExporter skinExp)
+        {
+            var smr = skinExp.GetComponentInChildren<SkinnedMeshRenderer>();
+            if (smr == null || smr.sharedMesh == null) return null;
+
+            // Check if ANY clip is humanoid (no Transform curves)
+            bool anyHumanoid = false;
+            if (skinExp.AnimationClips != null)
+            {
+                foreach (var ac in skinExp.AnimationClips)
+                {
+                    if (ac == null) continue;
+                    bool hasTransformCurves = false;
+                    foreach (var binding in AnimationUtility.GetCurveBindings(ac))
+                    {
+                        if (binding.type == typeof(Transform)) { hasTransformCurves = true; break; }
+                    }
+                    if (!hasTransformCurves) { anyHumanoid = true; break; }
+                }
+            }
+
+            if (!anyHumanoid)
+                return null; // all legacy/generic — use SampleAnimation path
+
+            // Humanoid: need an Animator on the bone hierarchy root with correct Avatar
+            // First, try to find an existing Animator
+            Animator animator = skinExp.GetComponentInChildren<Animator>();
+
+            // Load avatar from model asset
+            Avatar modelAvatar = null;
+            string meshAssetPath = AssetDatabase.GetAssetPath(smr.sharedMesh);
+            if (!string.IsNullOrEmpty(meshAssetPath))
+            {
+                foreach (var sub in AssetDatabase.LoadAllAssetsAtPath(meshAssetPath))
+                {
+                    if (sub is Avatar a) { modelAvatar = a; break; }
+                }
+            }
+
+            // Find bone hierarchy root (same algorithm as exporter)
+            Transform boneHierarchyRoot = skinExp.transform;
+            if (smr.rootBone != null && modelAvatar != null && modelAvatar.isHuman)
+            {
+                Transform candidate = smr.rootBone.parent;
+                while (candidate != null)
+                {
+                    Animator existingAnim = candidate.GetComponent<Animator>();
+                    if (existingAnim != null)
+                    {
+                        var savedAvatar = existingAnim.avatar;
+                        // Save transforms before Rebind to prevent teleportation
+                        var probePos = existingAnim.transform.localPosition;
+                        var probeRot = existingAnim.transform.localRotation;
+                        existingAnim.avatar = modelAvatar;
+                        existingAnim.Rebind();
+                        bool ok = existingAnim.GetBoneTransform(HumanBodyBones.Hips) != null;
+                        existingAnim.avatar = savedAvatar;
+                        existingAnim.Rebind(); // rebind with restored avatar
+                        existingAnim.transform.localPosition = probePos;
+                        existingAnim.transform.localRotation = probeRot;
+                        if (ok) { boneHierarchyRoot = candidate; break; }
+                    }
+                    candidate = candidate.parent;
+                }
+            }
+            else if (smr.rootBone != null)
+            {
+                Transform t = smr.rootBone;
+                while (t.parent != null)
+                {
+                    t = t.parent;
+                    if (smr.transform.IsChildOf(t)) break;
+                }
+                boneHierarchyRoot = t;
+            }
+
+            // Get or find Animator on hierarchy root
+            if (animator == null || !animator.transform.IsChildOf(boneHierarchyRoot))
+                animator = boneHierarchyRoot.GetComponentInChildren<Animator>();
+            if (animator == null)
+                animator = boneHierarchyRoot.GetComponent<Animator>();
+
+            if (animator == null) return null;
+
+            // Ensure avatar
+            if (animator.avatar == null && modelAvatar != null)
+                animator.avatar = modelAvatar;
+
+            // Save transforms before Rebind to prevent teleportation
+            var saveExpPos = skinExp.transform.localPosition;
+            var saveExpRot = skinExp.transform.localRotation;
+            var saveAnimPos = animator.transform.localPosition;
+            var saveAnimRot = animator.transform.localRotation;
+            animator.Rebind();
+            skinExp.transform.localPosition = saveExpPos;
+            skinExp.transform.localRotation = saveExpRot;
+            animator.transform.localPosition = saveAnimPos;
+            animator.transform.localRotation = saveAnimRot;
+            return animator;
         }
 
         // =====================================================================
@@ -729,6 +974,122 @@ namespace SplashEdit.RuntimeCode
                     }
                 }
             }
+
+            // Apply skin anim event preview
+            // For each event that has been reached, sample the AnimationClip
+            // at (currentFrame - eventFrame) / 30 seconds on the target skinned mesh.
+            // Uses two paths matching the exporter: legacy SampleAnimation for
+            // Generic/Legacy clips, AnimationMode for Humanoid muscle clips.
+            if (clip.SkinAnimEvents != null && clip.SkinAnimEvents.Count > 0)
+            {
+                // Build lookup of skinned exporters by name
+                var skinnedExporters = Object.FindObjectsByType<PSXSkinnedObjectExporter>(FindObjectsSortMode.None);
+                var skinExpByName = new Dictionary<string, PSXSkinnedObjectExporter>();
+                foreach (var se in skinnedExporters)
+                    if (!skinExpByName.ContainsKey(se.gameObject.name))
+                        skinExpByName[se.gameObject.name] = se;
+
+                // For each target, find the LAST triggered event (highest frame <= current)
+                // because a later event overrides an earlier one on the same target.
+                var activeSkinEvents = new Dictionary<string, PSXSkinAnimEvent>();
+                foreach (var evt in clip.SkinAnimEvents)
+                {
+                    if (string.IsNullOrEmpty(evt.TargetObjectName)) continue;
+                    if (evt.Frame > (int)frame) continue;
+                    activeSkinEvents[evt.TargetObjectName] = evt;
+                }
+
+                bool didBeginSampling = false;
+                foreach (var kvp in activeSkinEvents)
+                {
+                    var evt = kvp.Value;
+                    if (!skinExpByName.TryGetValue(evt.TargetObjectName, out var skinExp)) continue;
+                    if (skinExp.AnimationClips == null) continue;
+
+                    // Find the AnimationClip by name
+                    AnimationClip animClip = null;
+                    foreach (var ac in skinExp.AnimationClips)
+                    {
+                        if (ac != null && ac.name == evt.ClipName)
+                        {
+                            animClip = ac;
+                            break;
+                        }
+                    }
+                    if (animClip == null) continue;
+
+                    float elapsedSec = (frame - evt.Frame) / 30f;
+                    if (evt.Loop && animClip.length > 0f)
+                        elapsedSec = elapsedSec % animClip.length;
+                    else
+                        elapsedSec = Mathf.Min(elapsedSec, animClip.length);
+
+                    // Check if this clip has Transform curves (Generic/Legacy)
+                    string clipKey = $"{evt.TargetObjectName}:{evt.ClipName}";
+                    bool isLegacy;
+                    if (_skinLegacyClips.Contains(clipKey))
+                    {
+                        isLegacy = true;
+                    }
+                    else if (_skinAnimatorCache.TryGetValue(evt.TargetObjectName, out var cachedAnim) && cachedAnim != null)
+                    {
+                        isLegacy = false;
+                    }
+                    else
+                    {
+                        // First encounter — detect clip type
+                        bool hasTransformCurves = false;
+                        foreach (var binding in AnimationUtility.GetCurveBindings(animClip))
+                        {
+                            if (binding.type == typeof(Transform)) { hasTransformCurves = true; break; }
+                        }
+                        isLegacy = hasTransformCurves;
+                        if (isLegacy) _skinLegacyClips.Add(clipKey);
+                    }
+
+                    if (isLegacy)
+                    {
+                        // Generic/Legacy path: set legacy flag, sample directly
+                        // Save root transform so root-motion curves don't teleport the object
+                        var savedPos = skinExp.transform.localPosition;
+                        var savedRot = skinExp.transform.localRotation;
+                        bool wasLegacy = animClip.legacy;
+                        animClip.legacy = true;
+                        animClip.SampleAnimation(skinExp.gameObject, elapsedSec);
+                        animClip.legacy = wasLegacy;
+                        skinExp.transform.localPosition = savedPos;
+                        skinExp.transform.localRotation = savedRot;
+                    }
+                    else
+                    {
+                        // Humanoid path: use AnimationMode with cached Animator
+                        if (_animModeStarted && AnimationMode.InAnimationMode())
+                        {
+                            _skinAnimatorCache.TryGetValue(evt.TargetObjectName, out var animator);
+                            if (animator != null)
+                            {
+                                // Save root transforms so root-motion doesn't teleport the object
+                                var savedExpPos = skinExp.transform.localPosition;
+                                var savedExpRot = skinExp.transform.localRotation;
+                                var savedAnimPos = animator.transform.localPosition;
+                                var savedAnimRot = animator.transform.localRotation;
+
+                                if (!didBeginSampling) { AnimationMode.BeginSampling(); didBeginSampling = true; }
+                                AnimationMode.SampleAnimationClip(animator.gameObject, animClip, elapsedSec);
+
+                                // Restore root transforms
+                                skinExp.transform.localPosition = savedExpPos;
+                                skinExp.transform.localRotation = savedExpRot;
+                                animator.transform.localPosition = savedAnimPos;
+                                animator.transform.localRotation = savedAnimRot;
+                            }
+                        }
+                    }
+                }
+                if (didBeginSampling) AnimationMode.EndSampling();
+            }
+
+            SceneView.RepaintAll();
         }
 
         // =====================================================================

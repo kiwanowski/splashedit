@@ -51,6 +51,10 @@ namespace SplashEdit.RuntimeCode
             // Trigger boxes (v16)
             public PSXTriggerBox[] triggerBoxes;
 
+            // Skinned mesh data (v18)
+            public PSXSkinnedMeshExporter.BakedSkinData[] bakedSkinData;
+            public PSXSkinnedObjectExporter[] skinnedExporters;
+
             // Player
             public Vector3 playerPos;
             public Quaternion playerRot;
@@ -127,7 +131,8 @@ namespace SplashEdit.RuntimeCode
                 }
             }
 
-            using (BinaryWriter writer = new BinaryWriter(File.Open(path, FileMode.Create)))
+            using (BinaryWriter writer = new BinaryWriter(
+                new System.IO.FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite)))
             {
                 int colliderCount = 0;
                 foreach (var e in scene.exporters)
@@ -146,11 +151,11 @@ namespace SplashEdit.RuntimeCode
                     exporterIndex[scene.exporters[i]] = i;
 
                 // ──────────────────────────────────────────────────────
-                // Header (104 bytes — splashpack v16)
+                // Header (120 bytes — splashpack v19)
                 // ──────────────────────────────────────────────────────
                 writer.Write('S');
                 writer.Write('P');
-                writer.Write((ushort)17);
+                writer.Write((ushort)19);
                 writer.Write((ushort)luaFiles.Count);
                 writer.Write((ushort)scene.exporters.Length);
                 writer.Write((ushort)scene.atlases.Length);
@@ -271,6 +276,13 @@ namespace SplashEdit.RuntimeCode
                 long animationTableOffsetPos = writer.BaseStream.Position;
                 writer.Write((uint)0); // animationTableOffset placeholder
 
+                // Skinned mesh header fields (v18)
+                int skinnedMeshCount = scene.bakedSkinData?.Length ?? 0;
+                writer.Write((ushort)skinnedMeshCount);
+                writer.Write((ushort)0); // pad_skin
+                long skinTableOffsetPos = writer.BaseStream.Position;
+                writer.Write((uint)0); // skinTableOffset placeholder
+
                 // ──────────────────────────────────────────────────────
                 // Lua file metadata
                 // ──────────────────────────────────────────────────────
@@ -289,6 +301,17 @@ namespace SplashEdit.RuntimeCode
                 // ──────────────────────────────────────────────────────
                 // GameObject section
                 // ──────────────────────────────────────────────────────
+                // Build a set of proxy PSXObjectExporters that represent skinned meshes
+                HashSet<PSXObjectExporter> skinnedProxySet = new HashSet<PSXObjectExporter>();
+                if (scene.skinnedExporters != null)
+                {
+                    foreach (var skinExp in scene.skinnedExporters)
+                    {
+                        if (skinExp != null && skinExp.ProxyExporter != null)
+                            skinnedProxySet.Add(skinExp.ProxyExporter);
+                    }
+                }
+
                 Dictionary<PSXObjectExporter, int> interactableIndices = new Dictionary<PSXObjectExporter, int>();
                 for (int i = 0; i < scene.interactables.Length; i++)
                 {
@@ -319,8 +342,11 @@ namespace SplashEdit.RuntimeCode
                     else
                         writer.Write((short)-1);
 
-                    // Bitfield (LSB = isActive)
-                    writer.Write(exporter.IsActive ? 1 : 0);
+                    // Bitfield (LSB = isActive, bit 4 = isSkinned)
+                    int flagsAsInt = exporter.IsActive ? 1 : 0;
+                    if (skinnedProxySet.Contains(exporter))
+                        flagsAsInt |= 0x10; // bit 4 = isSkinned
+                    writer.Write(flagsAsInt);
 
                     // Component indices (8 bytes)
                     writer.Write(interactableIndices.TryGetValue(exporter, out int interactIdx) ? (ushort)interactIdx : (ushort)0xFFFF);
@@ -645,6 +671,7 @@ namespace SplashEdit.RuntimeCode
                         scene.cutscenes,
                         scene.exporters,
                         scene.audioSources,
+                        scene.skinnedExporters,
                         scene.gteScaling,
                         out long cutsceneTableActual,
                         log);
@@ -668,6 +695,7 @@ namespace SplashEdit.RuntimeCode
                         writer,
                         scene.animations,
                         scene.exporters,
+                        scene.skinnedExporters,
                         scene.gteScaling,
                         out long animationTableActual,
                         log);
@@ -677,6 +705,33 @@ namespace SplashEdit.RuntimeCode
                         long curPos = writer.BaseStream.Position;
                         writer.Seek((int)animationTableOffsetPos, SeekOrigin.Begin);
                         writer.Write((uint)animationTableActual);
+                        writer.Seek((int)curPos, SeekOrigin.Begin);
+                    }
+                }
+
+                // ──────────────────────────────────────────────────────
+                // Skinned mesh data (version 18)
+                // Table: 12 bytes per entry (dataOffset, nameLen+pad, nameOffset)
+                // Per-mesh: gameObjectIndex(u16), boneCount(u8), clipCount(u8),
+                //           boneIndices[polyCount*3], align4,
+                //           per-clip: nameLen(u8), name, 0x00, flags(u8),
+                //                     frameCount(u8), fps(u8), align2,
+                //                     BakedBoneMatrix[frameCount*boneCount]
+                // ──────────────────────────────────────────────────────
+                if (skinnedMeshCount > 0 && scene.bakedSkinData != null)
+                {
+                    PSXSkinnedMeshExporter.ExportSkinData(
+                        writer,
+                        scene.bakedSkinData,
+                        scene.exporters,
+                        out long skinTableActual,
+                        log);
+
+                    if (skinTableActual != 0)
+                    {
+                        long curPos = writer.BaseStream.Position;
+                        writer.Seek((int)skinTableOffsetPos, SeekOrigin.Begin);
+                        writer.Write((uint)skinTableActual);
                         writer.Seek((int)curPos, SeekOrigin.Begin);
                     }
                 }

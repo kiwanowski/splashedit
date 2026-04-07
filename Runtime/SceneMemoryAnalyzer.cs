@@ -187,6 +187,10 @@ namespace SplashEdit.RuntimeCode
             long bumpBytes = 2L * BumpAllocatorSize;
             report.rendererOverhead = otBytes + bumpBytes;
 
+            // ---- Skinned mesh data (v18) ----
+            report.skinnedMeshBytes = PSXSkinnedMeshExporter.EstimateSkinDataBytes(scene.bakedSkinData);
+            report.skinnedMeshCount = scene.bakedSkinData?.Length ?? 0;
+
             // ---- Executable size ----
             report.executableBytes = compiledExeBytes > 0 ? compiledExeBytes : 150 * 1024; // estimate if unknown
 
