@@ -52,6 +52,7 @@ namespace SplashEdit.EditorCode
             _savedObjectPositions.Clear();
             _savedObjectRotations.Clear();
             _savedObjectActive.Clear();
+            _hasSavedSceneView = false;
 
             // Save scene view camera (cutscene only)
             if (state.IsCutscene)
@@ -286,6 +287,22 @@ namespace SplashEdit.EditorCode
             _firedAudioEventIndices.Clear();
         }
 
+        /// <summary>
+        /// Mark all audio events at or before the current playhead as already fired,
+        /// so they don't retroactively trigger when starting playback mid-timeline.
+        /// </summary>
+        public void SeedFiredEventsUpTo(PSXTimelineState state)
+        {
+            _firedAudioEventIndices.Clear();
+            var audioEvents = state.AudioEvents;
+            if (audioEvents == null) return;
+            for (int i = 0; i < audioEvents.Count; i++)
+            {
+                if (audioEvents[i].Frame <= (int)state.PlayheadFrame)
+                    _firedAudioEventIndices.Add(i);
+            }
+        }
+
         // =====================================================================
         // Initial Values (for pre-first-keyframe blending)
         // =====================================================================
@@ -327,7 +344,7 @@ namespace SplashEdit.EditorCode
         public static Vector3 EvaluateTrack(PSXCutsceneTrack track, float frame, Vector3 initialValue)
         {
             if (track.Keyframes == null || track.Keyframes.Count == 0)
-                return Vector3.zero;
+                return initialValue;
 
             // Step interpolation tracks
             if (track.TrackType == PSXTrackType.ObjectActive ||

@@ -34,6 +34,8 @@ namespace SplashEdit.EditorCode
             var window = GetWindow<PSXTimelineWindow>();
             window.titleContent = new GUIContent("PSX Timeline");
             window.minSize = new Vector2(600, 300);
+            if (window._state.IsPreviewing)
+                window._preview.StopPreview(window._state);
             window._state.SetClip(clip);
             window.Show();
             window.Focus();
@@ -105,12 +107,13 @@ namespace SplashEdit.EditorCode
                 return;
             }
 
-            Undo.RecordObject(_state.Clip, "Timeline Edit");
-
             ComputeLayout();
             HandleInput();
 
+            _state.RequestedAction = PSXTimelineState.ToolbarAction.None;
             PSXTimelineDrawer.DrawToolbar(_state);
+            HandleToolbarAction();
+
             PSXTimelineDrawer.DrawTimeRuler(_state);
             PSXTimelineDrawer.DrawTrackHeaders(_state);
             PSXTimelineDrawer.DrawTrackLanes(_state);
@@ -154,6 +157,54 @@ namespace SplashEdit.EditorCode
                 w - PSXTimelineState.TrackHeaderWidth, tracksH);
 
             _state.KeyframeInspRect = new Rect(0, bodyTop + bodyH, w, inspH);
+        }
+
+        // =====================================================================
+        // Toolbar Action Handling
+        // =====================================================================
+
+        private void HandleToolbarAction()
+        {
+            switch (_state.RequestedAction)
+            {
+                case PSXTimelineState.ToolbarAction.Play:
+                    if (!_state.IsPreviewing)
+                    {
+                        _preview.StartPreview(_state);
+                        _state.IsPreviewing = true;
+                    }
+                    _preview.ResetAudioEvents();
+                    _state.IsPlaying = true;
+                    _state.PlayStartEditorTime = EditorApplication.timeSinceStartup;
+                    _state.PlayStartFrame = _state.PlayheadFrame;
+                    // Seed fired set for events before current playhead
+                    _preview.SeedFiredEventsUpTo(_state);
+                    break;
+
+                case PSXTimelineState.ToolbarAction.Pause:
+                    _state.IsPlaying = false;
+                    break;
+
+                case PSXTimelineState.ToolbarAction.Stop:
+                    _state.IsPlaying = false;
+                    _state.PlayheadFrame = 0;
+                    if (_state.IsPreviewing)
+                    {
+                        _preview.StopPreview(_state);
+                        _state.IsPreviewing = false;
+                    }
+                    break;
+
+                case PSXTimelineState.ToolbarAction.EndPreview:
+                    _state.IsPlaying = false;
+                    if (_state.IsPreviewing)
+                    {
+                        _preview.StopPreview(_state);
+                        _state.IsPreviewing = false;
+                    }
+                    break;
+            }
+            _state.RequestedAction = PSXTimelineState.ToolbarAction.None;
         }
 
         // =====================================================================
@@ -205,18 +256,10 @@ namespace SplashEdit.EditorCode
             switch (e.keyCode)
             {
                 case KeyCode.Space:
-                    if (_state.IsPlaying)
-                    {
-                        _state.IsPlaying = false;
-                    }
-                    else
-                    {
-                        if (!_state.IsPreviewing) _preview.StartPreview(_state);
-                        _state.IsPreviewing = true;
-                        _state.IsPlaying = true;
-                        _state.PlayStartEditorTime = EditorApplication.timeSinceStartup;
-                        _state.PlayStartFrame = _state.PlayheadFrame;
-                    }
+                    _state.RequestedAction = _state.IsPlaying
+                        ? PSXTimelineState.ToolbarAction.Pause
+                        : PSXTimelineState.ToolbarAction.Play;
+                    HandleToolbarAction();
                     e.Use();
                     Repaint();
                     break;
@@ -274,7 +317,14 @@ namespace SplashEdit.EditorCode
         {
             Vector2 localPos = e.mousePosition - new Vector2(_state.TimelineAreaRect.x, _state.TimelineAreaRect.y);
 
-            if (e.type == EventType.MouseDown && e.button == 0)
+            if (e.type == EventType.MouseDown && e.button == 0 && e.clickCount == 2)
+            {
+                // Double-click: add keyframe at position (checked BEFORE single click)
+                HandleDoubleClickAddKeyframe(localPos);
+                e.Use();
+                Repaint();
+            }
+            else if (e.type == EventType.MouseDown && e.button == 0)
             {
                 // Check keyframe hit
                 var (ti, ki) = PSXTimelineDrawer.HitTestKeyframe(_state, localPos);
@@ -297,6 +347,7 @@ namespace SplashEdit.EditorCode
                     // Start drag
                     _state.IsDraggingKeyframe = true;
                     _state.DragOriginalFrame = _state.Tracks[ti].Keyframes[ki].Frame;
+                    Undo.RecordObject(_state.Clip, "Move Keyframe");
 
                     e.Use();
                     Repaint();
@@ -322,13 +373,6 @@ namespace SplashEdit.EditorCode
                 e.Use();
                 Repaint();
             }
-            else if (e.type == EventType.MouseDown && e.button == 0 && e.clickCount == 2)
-            {
-                // Double-click: add keyframe at position
-                HandleDoubleClickAddKeyframe(localPos);
-                e.Use();
-                Repaint();
-            }
             else if (e.type == EventType.MouseDrag && _state.IsDraggingKeyframe)
             {
                 // Drag keyframe
@@ -336,13 +380,29 @@ namespace SplashEdit.EditorCode
                 {
                     float frame = _state.PixelXToFrame(localPos.x);
                     int newFrame = Mathf.Clamp(Mathf.RoundToInt(frame), 0, _state.DurationFrames);
-                    _state.Tracks[_state.SelectedTrackIndex].Keyframes[_state.SelectedKeyframeIndex].Frame = newFrame;
+                    var kf = _state.Tracks[_state.SelectedTrackIndex].Keyframes[_state.SelectedKeyframeIndex];
+                    if (kf.Frame != newFrame)
+                    {
+                        kf.Frame = newFrame;
+                        EditorUtility.SetDirty(_state.Clip);
+                    }
                     e.Use();
                     Repaint();
                 }
             }
             else if (e.type == EventType.MouseUp)
             {
+                // Re-sort keyframes after drag completes
+                if (_state.IsDraggingKeyframe && _state.SelectedTrackIndex >= 0)
+                {
+                    var keyframes = _state.Tracks[_state.SelectedTrackIndex].Keyframes;
+                    if (keyframes != null && _state.SelectedKeyframeIndex >= 0 && _state.SelectedKeyframeIndex < keyframes.Count)
+                    {
+                        var draggedKf = keyframes[_state.SelectedKeyframeIndex];
+                        keyframes.Sort((a, b) => a.Frame.CompareTo(b.Frame));
+                        _state.SelectedKeyframeIndex = keyframes.IndexOf(draggedKf);
+                    }
+                }
                 _state.IsDraggingKeyframe = false;
             }
             else if (e.type == EventType.ContextClick)
@@ -619,6 +679,8 @@ namespace SplashEdit.EditorCode
                         {
                             if (obj is PSXAnimationClip || obj is PSXCutsceneClip)
                             {
+                                if (_state.IsPreviewing)
+                                    _preview.StopPreview(_state);
                                 _state.SetClip((ScriptableObject)obj);
                                 break;
                             }

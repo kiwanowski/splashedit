@@ -34,27 +34,20 @@ namespace SplashEdit.EditorCode
             GUILayout.BeginArea(rect);
             GUILayout.BeginHorizontal(EditorStyles.toolbar);
 
-            // Transport buttons
+            // Transport buttons (set RequestedAction for the window to handle)
             if (state.IsPlaying)
             {
                 if (GUILayout.Button("||", EditorStyles.toolbarButton, GUILayout.Width(28)))
-                    state.IsPlaying = false;
+                    state.RequestedAction = PSXTimelineState.ToolbarAction.Pause;
             }
             else
             {
                 if (GUILayout.Button("\u25B6", EditorStyles.toolbarButton, GUILayout.Width(28)))
-                {
-                    state.IsPlaying = true;
-                    state.PlayStartEditorTime = EditorApplication.timeSinceStartup;
-                    state.PlayStartFrame = state.PlayheadFrame;
-                }
+                    state.RequestedAction = PSXTimelineState.ToolbarAction.Play;
             }
 
             if (GUILayout.Button("\u25A0", EditorStyles.toolbarButton, GUILayout.Width(28)))
-            {
-                state.IsPlaying = false;
-                state.PlayheadFrame = 0;
-            }
+                state.RequestedAction = PSXTimelineState.ToolbarAction.Stop;
 
             GUILayout.Space(8);
 
@@ -77,12 +70,13 @@ namespace SplashEdit.EditorCode
 
             GUILayout.Space(4);
 
-            // Preview indicator
+            // End Preview button + indicator
             if (state.IsPreviewing)
             {
                 var oldColor = GUI.color;
-                GUI.color = PSXEditorStyles.AccentGold;
-                GUILayout.Label("PREVIEW", EditorStyles.toolbarButton);
+                GUI.color = new Color(1f, 0.4f, 0.4f);
+                if (GUILayout.Button("End Preview", EditorStyles.toolbarButton, GUILayout.Width(80)))
+                    state.RequestedAction = PSXTimelineState.ToolbarAction.EndPreview;
                 GUI.color = oldColor;
             }
 

@@ -48,6 +48,10 @@ namespace SplashEdit.EditorCode
         public bool IsDraggingPlayhead;
         public int DragOriginalFrame;
 
+        // ── Toolbar action (set by drawer, consumed by window) ──
+        public enum ToolbarAction { None, Play, Pause, Stop, EndPreview }
+        public ToolbarAction RequestedAction;
+
         // ── Layout rects (computed each OnGUI) ──
         public Rect ToolbarRect;
         public Rect TrackHeaderRect;
@@ -134,6 +138,10 @@ namespace SplashEdit.EditorCode
 
         // ── Clip setup ──
 
+        /// <summary>
+        /// Set the clip to edit. Caller must stop preview before calling this
+        /// if IsPreviewing is true (state can't call preview directly).
+        /// </summary>
         public void SetClip(ScriptableObject clip)
         {
             Clip = clip;
@@ -141,6 +149,7 @@ namespace SplashEdit.EditorCode
             ClearSelection();
             PlayheadFrame = 0;
             IsPlaying = false;
+            IsPreviewing = false;
         }
 
         public void ClearSelection()
