@@ -317,8 +317,9 @@ namespace SplashEdit.RuntimeCode
             result.BoneIndices = ComputePerTriangleBoneIndices(mesh, smr);
 
             // ── Bake animation clips ──
-            // Capture objectInverse and uniformScale once before sampling.
-            // Animation sampling can move the root transform, so we freeze it here.
+            // Capture objectInverse and uniformScale ONCE before sampling.
+            // This must be fixed so that bone world-space movement (root motion)
+            // is captured relative to the original object position.
             Matrix4x4 objectInverse = skinExp.transform.worldToLocalMatrix;
             float uniformScale = skinExp.transform.lossyScale.x;
             Debug.Log($"[SkinBake] objectTransform pos={skinExp.transform.position}, rot={skinExp.transform.rotation.eulerAngles}, lossyScale={skinExp.transform.lossyScale}");
@@ -536,31 +537,11 @@ namespace SplashEdit.RuntimeCode
 
                 if (useLegacyPath)
                 {
-                    // True Legacy clip (no Avatar): SampleAnimation works directly
+                    // True Legacy clip (no Avatar): SampleAnimation works directly.
+                    // No per-frame transform restore -- root motion must be preserved.
                     Debug.Log($"[SkinBake]   Using TRUE LEGACY path (SampleAnimation, no Avatar)");
                     bool wasLegacy = clip.legacy;
                     clip.legacy = true;
-
-                    // Save transforms that SampleAnimation may move
-                    var savedSkinPos = skinExp.transform.localPosition;
-                    var savedSkinRot = skinExp.transform.localRotation;
-                    Vector3 savedRootBonePos = Vector3.zero;
-                    Quaternion savedRootBoneRot = Quaternion.identity;
-                    bool hasRootBone = (smr.rootBone != null && smr.rootBone != skinExp.transform);
-                    if (hasRootBone)
-                    {
-                        savedRootBonePos = smr.rootBone.localPosition;
-                        savedRootBoneRot = smr.rootBone.localRotation;
-                    }
-
-                    // Save intermediate transforms between skinExp and rootBone
-                    // since SampleAnimation can move these.
-                    var savedIntermediates = new System.Collections.Generic.List<(Transform t, Vector3 p, Quaternion r)>();
-                    if (hasRootBone)
-                    {
-                        for (Transform w = smr.rootBone.parent; w != null && w != skinExp.transform; w = w.parent)
-                            savedIntermediates.Add((w, w.localPosition, w.localRotation));
-                    }
 
                     try
                     {
@@ -568,35 +549,12 @@ namespace SplashEdit.RuntimeCode
                         {
                             float time = (frameCount > 1) ? (frame / (float)(frameCount - 1)) * clip.length : 0f;
                             clip.SampleAnimation(skinExp.gameObject, time);
-
-                            // Restore root + intermediate transforms so bone.l2w
-                            // is relative to original object position
-                            skinExp.transform.localPosition = savedSkinPos;
-                            skinExp.transform.localRotation = savedSkinRot;
-                            if (hasRootBone)
-                            {
-                                smr.rootBone.localPosition = savedRootBonePos;
-                                smr.rootBone.localRotation = savedRootBoneRot;
-                            }
-                            foreach (var (t, p, r) in savedIntermediates)
-                            { t.localPosition = p; t.localRotation = r; }
-
                             BakeFrame(bakedClip, frame, boneCount, bones, bindPoses, objectInverse, uniformScale, gteScaling);
                         }
                     }
                     finally
                     {
                         clip.legacy = wasLegacy;
-                        // Final restore in case an exception occurred mid-loop
-                        skinExp.transform.localPosition = savedSkinPos;
-                        skinExp.transform.localRotation = savedSkinRot;
-                        if (hasRootBone)
-                        {
-                            smr.rootBone.localPosition = savedRootBonePos;
-                            smr.rootBone.localRotation = savedRootBoneRot;
-                        }
-                        foreach (var (t, p, r) in savedIntermediates)
-                        { t.localPosition = p; t.localRotation = r; }
                     }
                 }
                 else
@@ -635,20 +593,8 @@ namespace SplashEdit.RuntimeCode
                         savedBoneRot[bi] = bones[bi].localRotation;
                         savedBoneScl[bi] = bones[bi].localScale;
                     }
-                    var savedRootPos = skinExp.transform.localPosition;
-                    var savedRootRot = skinExp.transform.localRotation;
-                    var savedAnimPos = animator.transform.localPosition;
-                    var savedAnimRot = animator.transform.localRotation;
 
-                    // Save intermediate transforms between skinExp and rootBone
-                    // since sampling can move these.
-                    var savedIntermediatesH = new System.Collections.Generic.List<(Transform t, Vector3 p, Quaternion r)>();
-                    if (smr.rootBone != null && smr.rootBone != skinExp.transform)
-                    {
-                        for (Transform w = smr.rootBone; w != null && w != skinExp.transform; w = w.parent)
-                            savedIntermediatesH.Add((w, w.localPosition, w.localRotation));
-                    }
-
+                    // No per-frame transform restore -- root motion must be preserved.
                     AnimationMode.StartAnimationMode();
                     try
                     {
@@ -666,15 +612,6 @@ namespace SplashEdit.RuntimeCode
                                           $"localPos={bones[0].localPosition}, localRot={bones[0].localRotation.eulerAngles}");
                             }
 
-                            // Restore root + intermediate transforms so bone.l2w
-                            // is relative to original object position
-                            skinExp.transform.localPosition = savedRootPos;
-                            skinExp.transform.localRotation = savedRootRot;
-                            animator.transform.localPosition = savedAnimPos;
-                            animator.transform.localRotation = savedAnimRot;
-                            foreach (var (t, p, r) in savedIntermediatesH)
-                            { t.localPosition = p; t.localRotation = r; }
-
                             BakeFrame(bakedClip, frame, boneCount, bones, bindPoses, objectInverse, uniformScale, gteScaling);
                         }
                     }
@@ -691,12 +628,6 @@ namespace SplashEdit.RuntimeCode
                             bones[bi].localRotation = savedBoneRot[bi];
                             bones[bi].localScale = savedBoneScl[bi];
                         }
-                        skinExp.transform.localPosition = savedRootPos;
-                        skinExp.transform.localRotation = savedRootRot;
-                        animator.transform.localPosition = savedAnimPos;
-                        animator.transform.localRotation = savedAnimRot;
-                        foreach (var (t, p, r) in savedIntermediatesH)
-                        { t.localPosition = p; t.localRotation = r; }
                     }
                 }
 
@@ -737,8 +668,9 @@ namespace SplashEdit.RuntimeCode
 
         /// <summary>
         /// Reads current bone transforms and writes one frame of baked data.
-        /// objectInverse and uniformScale must be captured once before animation
-        /// sampling so all frames are relative to the original object transform.
+        /// objectInverse and uniformScale are pre-captured once before the
+        /// animation loop so all frames are relative to the original object
+        /// position, preserving root motion.
         /// </summary>
         private static void BakeFrame(
             BakedClipData bakedClip, int frame, int boneCount,

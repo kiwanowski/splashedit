@@ -616,20 +616,13 @@ namespace SplashEdit.RuntimeCode
                         isLegacy = true;
                     }
 
+                    // Save the exporter root transform so the object doesn't
+                    // teleport to world origin; bones underneath animate freely.
+                    var savedPos = skinExp.transform.localPosition;
+                    var savedRot = skinExp.transform.localRotation;
+
                     if (isLegacy)
                     {
-                        // Save root + intermediate transforms (e.g. "Armature")
-                        // so root-motion / container curves don't teleport the object
-                        var savedPos = skinExp.transform.localPosition;
-                        var savedRot = skinExp.transform.localRotation;
-                        var smr = skinExp.GetComponentInChildren<SkinnedMeshRenderer>();
-                        var savedInter = new System.Collections.Generic.List<(Transform t, Vector3 p, Quaternion r)>();
-                        if (smr != null && smr.rootBone != null && smr.rootBone != skinExp.transform)
-                        {
-                            for (Transform w = smr.rootBone; w != null && w != skinExp.transform; w = w.parent)
-                                savedInter.Add((w, w.localPosition, w.localRotation));
-                        }
-
                         bool wasLegacy = animClip.legacy;
                         animClip.legacy = true;
                         animClip.SampleAnimation(skinExp.gameObject, elapsedSec);
@@ -637,8 +630,6 @@ namespace SplashEdit.RuntimeCode
 
                         skinExp.transform.localPosition = savedPos;
                         skinExp.transform.localRotation = savedRot;
-                        foreach (var (trans, p, r) in savedInter)
-                        { trans.localPosition = p; trans.localRotation = r; }
                     }
                     else
                     {
@@ -647,29 +638,16 @@ namespace SplashEdit.RuntimeCode
                             _skinAnimatorCache.TryGetValue(evt.TargetObjectName, out var animator);
                             if (animator != null)
                             {
-                                // Save root + intermediate transforms
-                                var savedExpPos = skinExp.transform.localPosition;
-                                var savedExpRot = skinExp.transform.localRotation;
                                 var savedAnimPos = animator.transform.localPosition;
                                 var savedAnimRot = animator.transform.localRotation;
-                                var smrH = skinExp.GetComponentInChildren<SkinnedMeshRenderer>();
-                                var savedInterH = new System.Collections.Generic.List<(Transform t, Vector3 p, Quaternion r)>();
-                                if (smrH != null && smrH.rootBone != null && smrH.rootBone != skinExp.transform)
-                                {
-                                    for (Transform w = smrH.rootBone; w != null && w != skinExp.transform; w = w.parent)
-                                        savedInterH.Add((w, w.localPosition, w.localRotation));
-                                }
 
                                 if (!didBeginSampling) { AnimationMode.BeginSampling(); didBeginSampling = true; }
                                 AnimationMode.SampleAnimationClip(animator.gameObject, animClip, elapsedSec);
 
-                                // Restore root + intermediate transforms
-                                skinExp.transform.localPosition = savedExpPos;
-                                skinExp.transform.localRotation = savedExpRot;
+                                skinExp.transform.localPosition = savedPos;
+                                skinExp.transform.localRotation = savedRot;
                                 animator.transform.localPosition = savedAnimPos;
                                 animator.transform.localRotation = savedAnimRot;
-                                foreach (var (trans, p, r) in savedInterH)
-                                { trans.localPosition = p; trans.localRotation = r; }
                             }
                         }
                     }
