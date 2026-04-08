@@ -49,7 +49,7 @@ namespace SplashEdit.RuntimeCode
     {
         public List<Tri> Triangles;
 
-        private static Vector3[] RecalculateSmoothNormals(Mesh mesh)
+        internal static Vector3[] RecalculateSmoothNormals(Mesh mesh)
         {
             Vector3[] normals = new Vector3[mesh.vertexCount];
             Dictionary<Vector3, List<int>> vertexMap = new Dictionary<Vector3, List<int>>();
@@ -87,23 +87,23 @@ namespace SplashEdit.RuntimeCode
         /// Creates a PSXMesh from a Unity Renderer by extracting its mesh and materials.
         /// </summary>
         public static PSXMesh CreateFromUnityRenderer(Renderer renderer, float GTEScaling, Transform transform, List<PSXTexture2D> textures,
-            VertexColorMode colorMode = VertexColorMode.BakedLighting, Color32? flatColor = null)
+            VertexColorMode colorMode = VertexColorMode.BakedLighting, Color32? flatColor = null, bool smoothNormals = true)
         {
             Mesh mesh = renderer.GetComponent<MeshFilter>().sharedMesh;
-            return BuildFromMesh(mesh, renderer, GTEScaling, transform, textures, colorMode, flatColor);
+            return BuildFromMesh(mesh, renderer, GTEScaling, transform, textures, colorMode, flatColor, smoothNormals);
         }
 
         /// <summary>
         /// Creates a PSXMesh from a supplied Unity Mesh with the renderer's materials.
         /// </summary>
         public static PSXMesh CreateFromUnityMesh(Mesh mesh, Renderer renderer, float GTEScaling, Transform transform, List<PSXTexture2D> textures,
-            VertexColorMode colorMode = VertexColorMode.BakedLighting, Color32? flatColor = null)
+            VertexColorMode colorMode = VertexColorMode.BakedLighting, Color32? flatColor = null, bool smoothNormals = true)
         {
-            return BuildFromMesh(mesh, renderer, GTEScaling, transform, textures, colorMode, flatColor);
+            return BuildFromMesh(mesh, renderer, GTEScaling, transform, textures, colorMode, flatColor, smoothNormals);
         }
 
         private static PSXMesh BuildFromMesh(Mesh mesh, Renderer renderer, float GTEScaling, Transform transform, List<PSXTexture2D> textures,
-            VertexColorMode colorMode = VertexColorMode.BakedLighting, Color32? flatColor = null)
+            VertexColorMode colorMode = VertexColorMode.BakedLighting, Color32? flatColor = null, bool smoothNormals = true)
         {
             PSXMesh psxMesh = new PSXMesh { Triangles = new List<Tri>() };
             Material[] materials = renderer.sharedMaterials;
@@ -115,7 +115,7 @@ namespace SplashEdit.RuntimeCode
             if (mesh.uv == null || mesh.uv.Length == 0)
                 mesh.uv = new Vector2[mesh.vertices.Length];
 
-            Vector3[] smoothNormals = RecalculateSmoothNormals(mesh);
+            Vector3[] normalsForLighting = smoothNormals ? RecalculateSmoothNormals(mesh) : mesh.normals;
 
             // Cache lights once for the entire mesh (only needed for baked lighting)
             Light[] sceneLights = colorMode == VertexColorMode.BakedLighting
@@ -135,7 +135,7 @@ namespace SplashEdit.RuntimeCode
             for (int i = 0; i < mesh.vertices.Length; i++)
             {
                 worldVertices[i] = transform.TransformPoint(mesh.vertices[i]);
-                worldNormals[i] = transform.TransformDirection(smoothNormals[i]).normalized;
+                worldNormals[i] = transform.TransformDirection(normalsForLighting[i]).normalized;
             }
 
             for (int submeshIndex = 0; submeshIndex < mesh.subMeshCount; submeshIndex++)

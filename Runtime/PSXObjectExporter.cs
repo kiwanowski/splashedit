@@ -43,10 +43,14 @@ namespace SplashEdit.RuntimeCode
         [SerializeField] private VertexColorMode vertexColorMode = VertexColorMode.BakedLighting;
         [SerializeField] private Color32 flatVertexColor = new Color32(128, 128, 128, 255);
 
+        [Tooltip("Smooth normals for lighting. Disable for flat/faceted shading.")]
+        [SerializeField] private bool smoothNormals = true;
+
         public PSXBPP BitDepth => bitDepth;
         public PSXCollisionType CollisionType => collisionType;
         public VertexColorMode ColorMode => vertexColorMode;
         public Color32 FlatVertexColor => flatVertexColor;
+        public bool SmoothNormals => smoothNormals;
 
         private readonly Dictionary<(int, PSXBPP), PSXTexture2D> cache = new();
 
@@ -111,7 +115,7 @@ namespace SplashEdit.RuntimeCode
             Renderer renderer = GetComponent<Renderer>();
             if (renderer != null)
             {
-                Mesh = PSXMesh.CreateFromUnityRenderer(renderer, GTEScaling, transform, Textures, vertexColorMode, flatVertexColor);
+                Mesh = PSXMesh.CreateFromUnityRenderer(renderer, GTEScaling, transform, Textures, vertexColorMode, flatVertexColor, smoothNormals);
             }
         }
     }

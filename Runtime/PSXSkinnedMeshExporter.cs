@@ -11,7 +11,7 @@ namespace SplashEdit.RuntimeCode
 {
     /// <summary>
     /// Handles baking bone matrices and writing skin data to the splashpack binary.
-    /// All skeleton hierarchy math happens here at export time — the PS1 runtime
+    /// All skeleton hierarchy math happens here at export time. The PS1 runtime
     /// only indexes flat arrays of pre-composed bone matrices.
     /// </summary>
     public static class PSXSkinnedMeshExporter
@@ -19,11 +19,11 @@ namespace SplashEdit.RuntimeCode
         private const int MAX_SKINNED_MESHES = 16;
         private const int MAX_BONES = 64;
         private const int MAX_CLIPS = 16;
-        // No hard frame cap — user decides how many frames to bake. frameCount is uint16 in the binary.
+        // No hard frame cap. frameCount is uint16 in the binary.
         private const int MAX_NAME_LEN = 24;
 
         /// <summary>
-        /// Per-bone baked matrix for a single frame: 3×3 rotation (4.12 fp) + translation (int16 model units).
+        /// Per-bone baked matrix for a single frame: 3x3 rotation (4.12 fp) + translation (int16 model units).
         /// Matches the C++ BakedBoneMatrix struct (24 bytes).
         /// </summary>
         public struct BakedBoneMatrix
@@ -80,8 +80,50 @@ namespace SplashEdit.RuntimeCode
             proxyGO.transform.SetPositionAndRotation(skinExp.transform.position, skinExp.transform.rotation);
             proxyGO.transform.localScale = skinExp.transform.lossyScale;
 
-            // Use the bind-pose mesh directly (vertex positions in model space)
-            proxyGO.AddComponent<MeshFilter>().sharedMesh = smr.sharedMesh;
+            // For BakedLighting, bake lighting from the current pose into vertex colors
+            // on a copy of the bind-pose mesh.
+            Mesh proxyMesh = smr.sharedMesh;
+            VertexColorMode effectiveColorMode = skinExp.ColorMode;
+
+            if (skinExp.ColorMode == VertexColorMode.BakedLighting)
+            {
+                var bakedMesh = new Mesh();
+                smr.BakeMesh(bakedMesh);
+
+                // Ensure we have normals on the baked mesh
+                if (bakedMesh.normals == null || bakedMesh.normals.Length == 0)
+                    bakedMesh.RecalculateNormals();
+
+                Vector3[] normalsForLighting = skinExp.SmoothNormals
+                    ? PSXMesh.RecalculateSmoothNormals(bakedMesh)
+                    : bakedMesh.normals;
+                Vector3[] bakedVerts = bakedMesh.vertices;
+
+                Light[] sceneLights = UnityEngine.Object.FindObjectsByType<Light>(FindObjectsSortMode.None);
+                // Filter to enabled lights
+                var enabledLights = new System.Collections.Generic.List<Light>();
+                foreach (var l in sceneLights)
+                    if (l.enabled) enabledLights.Add(l);
+                Light[] lights = enabledLights.ToArray();
+
+                // Compute per-vertex lighting from the current-pose world normals/positions
+                var colors = new Color[bakedVerts.Length];
+                for (int i = 0; i < bakedVerts.Length; i++)
+                {
+                    Vector3 worldPos = smr.transform.TransformPoint(bakedVerts[i]);
+                    Vector3 worldNormal = smr.transform.TransformDirection(normalsForLighting[i]).normalized;
+                    colors[i] = PSXLightingBaker.ComputeLighting(worldPos, worldNormal, lights);
+                }
+
+                // Create a copy of the bind-pose mesh with baked lighting as vertex colors
+                proxyMesh = UnityEngine.Object.Instantiate(smr.sharedMesh);
+                proxyMesh.colors = colors;
+                effectiveColorMode = VertexColorMode.MeshVertexColors;
+
+                UnityEngine.Object.DestroyImmediate(bakedMesh);
+            }
+
+            proxyGO.AddComponent<MeshFilter>().sharedMesh = proxyMesh;
             var mr = proxyGO.AddComponent<MeshRenderer>();
             mr.sharedMaterials = smr.sharedMaterials;
 
@@ -90,8 +132,9 @@ namespace SplashEdit.RuntimeCode
             SetPrivateField(exp, "isActive", skinExp.IsActive);
             SetPrivateField(exp, "bitDepth", skinExp.BitDepth);
             SetPrivateField(exp, "luaFile", skinExp.LuaFile);
-            SetPrivateField(exp, "vertexColorMode", skinExp.ColorMode);
+            SetPrivateField(exp, "vertexColorMode", effectiveColorMode);
             SetPrivateField(exp, "flatVertexColor", skinExp.FlatVertexColor);
+            SetPrivateField(exp, "smoothNormals", skinExp.SmoothNormals);
 
             skinExp.ProxyExporter = exp;
             skinExp.ProxyGameObject = proxyGO;
@@ -105,6 +148,14 @@ namespace SplashEdit.RuntimeCode
         {
             if (skinExp.ProxyGameObject != null)
             {
+                // If we created an instantiated mesh copy (for baked lighting), destroy it too
+                var mf = skinExp.ProxyGameObject.GetComponent<MeshFilter>();
+                if (mf != null && mf.sharedMesh != null)
+                {
+                    var smr = skinExp.GetComponentInChildren<SkinnedMeshRenderer>();
+                    if (smr != null && mf.sharedMesh != smr.sharedMesh)
+                        UnityEngine.Object.DestroyImmediate(mf.sharedMesh);
+                }
                 UnityEngine.Object.DestroyImmediate(skinExp.ProxyGameObject);
                 skinExp.ProxyGameObject = null;
                 skinExp.ProxyExporter = null;
@@ -145,10 +196,10 @@ namespace SplashEdit.RuntimeCode
             var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
             if (importer == null) return;
 
-            // Already Humanoid — nothing to do
+            // Already Humanoid, nothing to do
             if (importer.animationType == ModelImporterAnimationType.Human)
             {
-                Debug.Log($"[SkinBake] Model '{System.IO.Path.GetFileName(assetPath)}' is already Humanoid — OK.");
+                Debug.Log($"[SkinBake] Model '{System.IO.Path.GetFileName(assetPath)}' is already Humanoid.");
                 return;
             }
 
@@ -169,7 +220,7 @@ namespace SplashEdit.RuntimeCode
                 if (!hasTransformCurves)
                 {
                     hasHumanoidClip = true;
-                    Debug.Log($"[SkinBake] Clip '{clip.name}' has NO Transform curves — Humanoid muscle clip detected.");
+                    Debug.Log($"[SkinBake] Clip '{clip.name}' has NO Transform curves, Humanoid muscle clip detected.");
                     break;
                 }
             }
@@ -191,7 +242,7 @@ namespace SplashEdit.RuntimeCode
                 if (sub is Avatar avatar && avatar.isHuman && avatar.isValid)
                 {
                     foundHumanAvatar = true;
-                    Debug.Log($"[SkinBake] Humanoid reimport successful — Avatar '{avatar.name}' isHuman=true isValid=true.");
+                    Debug.Log($"[SkinBake] Humanoid reimport successful, Avatar '{avatar.name}' isHuman=true isValid=true.");
                     break;
                 }
             }
@@ -200,7 +251,7 @@ namespace SplashEdit.RuntimeCode
             {
                 Debug.LogError($"[SkinBake] Humanoid reimport did NOT produce a valid Humanoid Avatar! " +
                                $"Unity could not auto-map bones. Please configure the bone mapping manually " +
-                               $"in the model's import settings (Rig tab → Animation Type: Humanoid → Configure).");
+                               $"in the model's import settings (Rig tab > Animation Type: Humanoid > Configure).");
             }
 #endif
         }
@@ -266,8 +317,11 @@ namespace SplashEdit.RuntimeCode
             result.BoneIndices = ComputePerTriangleBoneIndices(mesh, smr);
 
             // ── Bake animation clips ──
-            Transform objectTransform = skinExp.transform;
-            Debug.Log($"[SkinBake] objectTransform pos={objectTransform.position}, rot={objectTransform.rotation.eulerAngles}, lossyScale={objectTransform.lossyScale}");
+            // Capture objectInverse and uniformScale once before sampling.
+            // Animation sampling can move the root transform, so we freeze it here.
+            Matrix4x4 objectInverse = skinExp.transform.worldToLocalMatrix;
+            float uniformScale = skinExp.transform.lossyScale.x;
+            Debug.Log($"[SkinBake] objectTransform pos={skinExp.transform.position}, rot={skinExp.transform.rotation.eulerAngles}, lossyScale={skinExp.transform.lossyScale}");
             Debug.Log($"[SkinBake] gteScaling={gteScaling}");
             Debug.Log($"[SkinBake] AnimationClips count={skinExp.AnimationClips?.Length ?? 0}, TargetFPS={skinExp.TargetFPS}");
 
@@ -276,7 +330,7 @@ namespace SplashEdit.RuntimeCode
             // FBX root transform.  skinExp may be a child/sibling of that root,
             // NOT the root itself.  We probe each ancestor of rootBone with a
             // temporary Animator+Avatar to find the one where GetBoneTransform
-            // succeeds — that is the FBX root where bone paths resolve correctly.
+            // succeeds, that is the FBX root where bone paths resolve correctly.
             Transform boneHierarchyRoot = skinExp.transform; // fallback
 
             // Load the Avatar from the model asset
@@ -298,7 +352,7 @@ namespace SplashEdit.RuntimeCode
                 Transform candidate = smr.rootBone.parent;
                 while (candidate != null)
                 {
-                    // Check if there's already an Animator here — use it instead of adding a duplicate
+                    // Check if there's already an Animator here, use it instead of adding a duplicate
                     Animator existingAnim = candidate.GetComponent<Animator>();
                     Animator probe = null;
                     bool addedProbe = false;
@@ -343,7 +397,7 @@ namespace SplashEdit.RuntimeCode
                         if (addedProbe && probe != null)
                             UnityEngine.Object.DestroyImmediate(probe);
                     }
-                    Debug.Log($"[SkinBake]   probe '{candidate.name}' — GetBoneTransform(Hips)=null, trying parent...");
+                    Debug.Log($"[SkinBake]   probe '{candidate.name}' GetBoneTransform(Hips)=null, trying parent...");
                     candidate = candidate.parent;
                 }
                 if (boneHierarchyRoot == skinExp.transform)
@@ -362,7 +416,7 @@ namespace SplashEdit.RuntimeCode
             }
             Debug.Log($"[SkinBake] Bone hierarchy root: '{boneHierarchyRoot.name}' (skinExp='{skinExp.name}', rootBone='{smr.rootBone?.name ?? "null"}', smr='{smr.transform.name}')");
 
-            // Search for an existing Animator — check both skinExp descendants
+            // Search for an existing Animator, check both skinExp descendants
             // AND the bone hierarchy root (which may be a parent/sibling of skinExp).
             Animator animator = skinExp.GetComponentInChildren<Animator>();
             if (animator == null && boneHierarchyRoot != skinExp.transform)
@@ -476,33 +530,80 @@ namespace SplashEdit.RuntimeCode
                     Debug.Log($"[SkinBake]   Non-Transform bindings (first 10): {string.Join(", ", typeSet)}");
                 }
 
-                if (hasTransformCurves)
+                // Use SampleAnimation only for truly legacy clips (no Avatar).
+                // Generic clips need AnimationMode + Animator for correct bone paths.
+                bool useLegacyPath = hasTransformCurves && modelAvatar == null;
+
+                if (useLegacyPath)
                 {
-                    // Generic/Legacy clip: SampleAnimation works directly
-                    Debug.Log($"[SkinBake]   Using LEGACY/GENERIC path (SampleAnimation)");
+                    // True Legacy clip (no Avatar): SampleAnimation works directly
+                    Debug.Log($"[SkinBake]   Using TRUE LEGACY path (SampleAnimation, no Avatar)");
                     bool wasLegacy = clip.legacy;
                     clip.legacy = true;
+
+                    // Save transforms that SampleAnimation may move
+                    var savedSkinPos = skinExp.transform.localPosition;
+                    var savedSkinRot = skinExp.transform.localRotation;
+                    Vector3 savedRootBonePos = Vector3.zero;
+                    Quaternion savedRootBoneRot = Quaternion.identity;
+                    bool hasRootBone = (smr.rootBone != null && smr.rootBone != skinExp.transform);
+                    if (hasRootBone)
+                    {
+                        savedRootBonePos = smr.rootBone.localPosition;
+                        savedRootBoneRot = smr.rootBone.localRotation;
+                    }
+
+                    // Save intermediate transforms between skinExp and rootBone
+                    // since SampleAnimation can move these.
+                    var savedIntermediates = new System.Collections.Generic.List<(Transform t, Vector3 p, Quaternion r)>();
+                    if (hasRootBone)
+                    {
+                        for (Transform w = smr.rootBone.parent; w != null && w != skinExp.transform; w = w.parent)
+                            savedIntermediates.Add((w, w.localPosition, w.localRotation));
+                    }
+
                     try
                     {
                         for (int frame = 0; frame < frameCount; frame++)
                         {
                             float time = (frameCount > 1) ? (frame / (float)(frameCount - 1)) * clip.length : 0f;
                             clip.SampleAnimation(skinExp.gameObject, time);
-                            BakeFrame(bakedClip, frame, boneCount, bones, bindPoses, objectTransform, gteScaling);
+
+                            // Restore root + intermediate transforms so bone.l2w
+                            // is relative to original object position
+                            skinExp.transform.localPosition = savedSkinPos;
+                            skinExp.transform.localRotation = savedSkinRot;
+                            if (hasRootBone)
+                            {
+                                smr.rootBone.localPosition = savedRootBonePos;
+                                smr.rootBone.localRotation = savedRootBoneRot;
+                            }
+                            foreach (var (t, p, r) in savedIntermediates)
+                            { t.localPosition = p; t.localRotation = r; }
+
+                            BakeFrame(bakedClip, frame, boneCount, bones, bindPoses, objectInverse, uniformScale, gteScaling);
                         }
                     }
                     finally
                     {
                         clip.legacy = wasLegacy;
+                        // Final restore in case an exception occurred mid-loop
+                        skinExp.transform.localPosition = savedSkinPos;
+                        skinExp.transform.localRotation = savedSkinRot;
+                        if (hasRootBone)
+                        {
+                            smr.rootBone.localPosition = savedRootBonePos;
+                            smr.rootBone.localRotation = savedRootBoneRot;
+                        }
+                        foreach (var (t, p, r) in savedIntermediates)
+                        { t.localPosition = p; t.localRotation = r; }
                     }
                 }
                 else
                 {
-                    // Humanoid muscle clip: use AnimationMode.SampleAnimationClip
-                    // for proper muscle→bone retargeting at editor time.
-                    // This is the official Unity API for previewing Humanoid clips
-                    // and works reliably when the Animator is on the correct transform.
-                    Debug.Log($"[SkinBake]   Using HUMANOID path (AnimationMode.SampleAnimationClip)");
+                    // Generic or Humanoid clip: use AnimationMode.SampleAnimationClip
+                    // for proper bone path resolution and muscle retargeting.
+                    Debug.Log($"[SkinBake]   Using ANIMATOR path (AnimationMode.SampleAnimationClip)");
                     Debug.Log($"[SkinBake]   Animator on '{animator.gameObject.name}', avatar={animator.avatar?.name ?? "null"}, isHuman={animator.avatar?.isHuman ?? false}");
 
                     // Verify bone reachability from the Animator
@@ -539,6 +640,15 @@ namespace SplashEdit.RuntimeCode
                     var savedAnimPos = animator.transform.localPosition;
                     var savedAnimRot = animator.transform.localRotation;
 
+                    // Save intermediate transforms between skinExp and rootBone
+                    // since sampling can move these.
+                    var savedIntermediatesH = new System.Collections.Generic.List<(Transform t, Vector3 p, Quaternion r)>();
+                    if (smr.rootBone != null && smr.rootBone != skinExp.transform)
+                    {
+                        for (Transform w = smr.rootBone; w != null && w != skinExp.transform; w = w.parent)
+                            savedIntermediatesH.Add((w, w.localPosition, w.localRotation));
+                    }
+
                     AnimationMode.StartAnimationMode();
                     try
                     {
@@ -556,7 +666,16 @@ namespace SplashEdit.RuntimeCode
                                           $"localPos={bones[0].localPosition}, localRot={bones[0].localRotation.eulerAngles}");
                             }
 
-                            BakeFrame(bakedClip, frame, boneCount, bones, bindPoses, objectTransform, gteScaling);
+                            // Restore root + intermediate transforms so bone.l2w
+                            // is relative to original object position
+                            skinExp.transform.localPosition = savedRootPos;
+                            skinExp.transform.localRotation = savedRootRot;
+                            animator.transform.localPosition = savedAnimPos;
+                            animator.transform.localRotation = savedAnimRot;
+                            foreach (var (t, p, r) in savedIntermediatesH)
+                            { t.localPosition = p; t.localRotation = r; }
+
+                            BakeFrame(bakedClip, frame, boneCount, bones, bindPoses, objectInverse, uniformScale, gteScaling);
                         }
                     }
                     finally
@@ -576,6 +695,8 @@ namespace SplashEdit.RuntimeCode
                         skinExp.transform.localRotation = savedRootRot;
                         animator.transform.localPosition = savedAnimPos;
                         animator.transform.localRotation = savedAnimRot;
+                        foreach (var (t, p, r) in savedIntermediatesH)
+                        { t.localPosition = p; t.localRotation = r; }
                     }
                 }
 
@@ -596,7 +717,7 @@ namespace SplashEdit.RuntimeCode
                     if (!anyDiff)
                         Debug.LogWarning($"[SkinBake]   *** WARNING: Frame 0 and Frame 1 are IDENTICAL for bone 0! Animation may not be sampling correctly! ***");
                     else
-                        Debug.Log($"[SkinBake]   Frame 0 and Frame 1 differ — animation IS being baked.");
+                        Debug.Log($"[SkinBake]   Frame 0 and Frame 1 differ, animation IS being baked.");
                 }
 
                 result.Clips.Add(bakedClip);
@@ -616,15 +737,14 @@ namespace SplashEdit.RuntimeCode
 
         /// <summary>
         /// Reads current bone transforms and writes one frame of baked data.
+        /// objectInverse and uniformScale must be captured once before animation
+        /// sampling so all frames are relative to the original object transform.
         /// </summary>
         private static void BakeFrame(
             BakedClipData bakedClip, int frame, int boneCount,
             Transform[] bones, Matrix4x4[] bindPoses,
-            Transform objectTransform, float gteScaling)
+            Matrix4x4 objectInverse, float uniformScale, float gteScaling)
         {
-            Matrix4x4 objectInverse = objectTransform.worldToLocalMatrix;
-            float uniformScale = objectTransform.lossyScale.x;
-
             for (int bi = 0; bi < boneCount; bi++)
             {
                 Matrix4x4 skinMatrix = objectInverse * bones[bi].localToWorldMatrix * bindPoses[bi];
@@ -694,8 +814,8 @@ namespace SplashEdit.RuntimeCode
         /// </summary>
         private static BakedBoneMatrix ConvertToPSXBoneMatrix(Matrix4x4 m, float gteScaling, float uniformScale)
         {
-            // Extract 3×3 rotation (includes any scale from bones)
-            // Apply Y-flip: R_psx = FlipY × R × FlipY
+            // Extract 3x3 rotation (includes any scale from bones)
+            // Apply Y-flip: R_psx = FlipY * R * FlipY
             // FlipY = diag(1, -1, 1)
             // Result: negate elements in row 1 XOR column 1
             float r00 = m.m00;   float r01 = -m.m01;  float r02 = m.m02;
@@ -777,7 +897,7 @@ namespace SplashEdit.RuntimeCode
                 writer.Write((byte)skin.BoneCount);
                 writer.Write((byte)Mathf.Min(skin.Clips.Count, MAX_CLIPS));
 
-                // Bone indices: polyCount × 3 bytes
+                // Bone indices: polyCount * 3 bytes
                 if (skin.BoneIndices != null)
                     writer.Write(skin.BoneIndices);
 
@@ -813,7 +933,7 @@ namespace SplashEdit.RuntimeCode
                     // frameCount (2 bytes, little-endian uint16)
                     writer.Write((ushort)clip.FrameCount);
 
-                    // Frame data: frameCount × boneCount × 24 bytes
+                    // Frame data: frameCount * boneCount * 24 bytes
                     int frameCount = clip.FrameCount;
                     for (int fi = 0; fi < frameCount; fi++)
                     {

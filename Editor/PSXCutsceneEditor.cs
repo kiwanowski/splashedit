@@ -38,11 +38,10 @@ namespace SplashEdit.RuntimeCode
         private bool _animModeStarted;
         // Cache: for each skinned exporter name, the resolved Animator (or null for legacy path)
         private Dictionary<string, Animator> _skinAnimatorCache = new Dictionary<string, Animator>();
-        private HashSet<string> _skinLegacyClips = new HashSet<string>(); // clips that use legacy path
 
-        // ── PSX H register ↔ Unity FOV conversion ──
-        // PS1 screen is 320×240. H = projection plane distance.
-        // verticalFOV = 2 * atan(120 / H)  →  H = 120 / tan(vFOV/2)
+        // -- PSX H register / Unity FOV conversion --
+        // PS1 screen is 320x240. H = projection plane distance.
+        // verticalFOV = 2 * atan(120 / H), so H = 120 / tan(vFOV/2)
         private const float PSX_HALF_HEIGHT = 120f;
         private static float HToFOV(float h)
         {
@@ -112,7 +111,7 @@ namespace SplashEdit.RuntimeCode
             var exporterNames = new HashSet<string>();
             var audioNames = new HashSet<string>();
             var canvasNames = new HashSet<string>();
-            var elementNames = new Dictionary<string, HashSet<string>>(); // canvas → element names
+            var elementNames = new Dictionary<string, HashSet<string>>(); // canvas -> element names
             var exporters = Object.FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
             foreach (var e in exporters)
                 exporterNames.Add(e.gameObject.name);
@@ -646,7 +645,6 @@ namespace SplashEdit.RuntimeCode
             // Prepare skinned mesh anim preview
             _animModeStarted = false;
             _skinAnimatorCache.Clear();
-            _skinLegacyClips.Clear();
             if (clip.SkinAnimEvents != null && clip.SkinAnimEvents.Count > 0)
             {
                 // Save transforms of skinned objects targeted by events so we can
@@ -745,30 +743,10 @@ namespace SplashEdit.RuntimeCode
             var smr = skinExp.GetComponentInChildren<SkinnedMeshRenderer>();
             if (smr == null || smr.sharedMesh == null) return null;
 
-            // Check if ANY clip is humanoid (no Transform curves)
-            bool anyHumanoid = false;
-            if (skinExp.AnimationClips != null)
-            {
-                foreach (var ac in skinExp.AnimationClips)
-                {
-                    if (ac == null) continue;
-                    bool hasTransformCurves = false;
-                    foreach (var binding in AnimationUtility.GetCurveBindings(ac))
-                    {
-                        if (binding.type == typeof(Transform)) { hasTransformCurves = true; break; }
-                    }
-                    if (!hasTransformCurves) { anyHumanoid = true; break; }
-                }
-            }
-
-            if (!anyHumanoid)
-                return null; // all legacy/generic — use SampleAnimation path
-
-            // Humanoid: need an Animator on the bone hierarchy root with correct Avatar
-            // First, try to find an existing Animator
-            Animator animator = skinExp.GetComponentInChildren<Animator>();
-
-            // Load avatar from model asset
+            // Check if the model has an Avatar (Generic or Humanoid).
+            // If it does, any clip needs AnimationMode + Animator for correct
+            // bone path resolution. Only truly legacy (no Avatar) models use
+            // the SampleAnimation path.
             Avatar modelAvatar = null;
             string meshAssetPath = AssetDatabase.GetAssetPath(smr.sharedMesh);
             if (!string.IsNullOrEmpty(meshAssetPath))
@@ -778,6 +756,12 @@ namespace SplashEdit.RuntimeCode
                     if (sub is Avatar a) { modelAvatar = a; break; }
                 }
             }
+
+            if (modelAvatar == null)
+                return null; // no avatar, use SampleAnimation path
+
+            // Need an Animator on the bone hierarchy root with correct Avatar
+            Animator animator = skinExp.GetComponentInChildren<Animator>();
 
             // Find bone hierarchy root (same algorithm as exporter)
             Transform boneHierarchyRoot = skinExp.transform;
@@ -816,13 +800,16 @@ namespace SplashEdit.RuntimeCode
                 boneHierarchyRoot = t;
             }
 
-            // Get or find Animator on hierarchy root
+            // Get or find Animator on hierarchy root; create one if needed for Generic models
             if (animator == null || !animator.transform.IsChildOf(boneHierarchyRoot))
                 animator = boneHierarchyRoot.GetComponentInChildren<Animator>();
             if (animator == null)
                 animator = boneHierarchyRoot.GetComponent<Animator>();
-
-            if (animator == null) return null;
+            if (animator == null)
+            {
+                // Generic model with no Animator, add one temporarily
+                animator = boneHierarchyRoot.gameObject.AddComponent<Animator>();
+            }
 
             // Ensure avatar
             if (animator.avatar == null && modelAvatar != null)
@@ -833,11 +820,20 @@ namespace SplashEdit.RuntimeCode
             var saveExpRot = skinExp.transform.localRotation;
             var saveAnimPos = animator.transform.localPosition;
             var saveAnimRot = animator.transform.localRotation;
+            var smrR = skinExp.GetComponentInChildren<SkinnedMeshRenderer>();
+            var savedInterR = new System.Collections.Generic.List<(Transform t, Vector3 p, Quaternion r)>();
+            if (smrR != null && smrR.rootBone != null && smrR.rootBone != skinExp.transform)
+            {
+                for (Transform w = smrR.rootBone; w != null && w != skinExp.transform; w = w.parent)
+                    savedInterR.Add((w, w.localPosition, w.localRotation));
+            }
             animator.Rebind();
             skinExp.transform.localPosition = saveExpPos;
             skinExp.transform.localRotation = saveExpRot;
             animator.transform.localPosition = saveAnimPos;
             animator.transform.localRotation = saveAnimRot;
+            foreach (var (t, p, r) in savedInterR)
+            { t.localPosition = p; t.localRotation = r; }
             return animator;
         }
 
@@ -946,7 +942,7 @@ namespace SplashEdit.RuntimeCode
                 Vector3 pos = camPos ?? sv.camera.transform.position;
                 Quaternion rot = camRot ?? sv.camera.transform.rotation;
 
-                // SceneView needs pivot and rotation set — pivot = position + forward * size
+                // SceneView needs pivot and rotation set: pivot = position + forward * size
                 sv.rotation = rot;
                 sv.pivot = pos + rot * Vector3.forward * sv.cameraDistance;
 
@@ -1024,41 +1020,44 @@ namespace SplashEdit.RuntimeCode
                     else
                         elapsedSec = Mathf.Min(elapsedSec, animClip.length);
 
-                    // Check if this clip has Transform curves (Generic/Legacy)
+                    // Determine path: if an Animator is cached for this target,
+                    // use AnimationMode; otherwise use legacy SampleAnimation.
                     string clipKey = $"{evt.TargetObjectName}:{evt.ClipName}";
                     bool isLegacy;
-                    if (_skinLegacyClips.Contains(clipKey))
+                    if (_skinAnimatorCache.TryGetValue(evt.TargetObjectName, out var cachedAnim))
                     {
-                        isLegacy = true;
-                    }
-                    else if (_skinAnimatorCache.TryGetValue(evt.TargetObjectName, out var cachedAnim) && cachedAnim != null)
-                    {
-                        isLegacy = false;
+                        // Cached: non-null Animator means AnimationMode, null means legacy
+                        isLegacy = (cachedAnim == null);
                     }
                     else
                     {
-                        // First encounter — detect clip type
-                        bool hasTransformCurves = false;
-                        foreach (var binding in AnimationUtility.GetCurveBindings(animClip))
-                        {
-                            if (binding.type == typeof(Transform)) { hasTransformCurves = true; break; }
-                        }
-                        isLegacy = hasTransformCurves;
-                        if (isLegacy) _skinLegacyClips.Add(clipKey);
+                        // Not in cache (shouldn't happen if StartPreview ran), default to legacy
+                        isLegacy = true;
                     }
 
                     if (isLegacy)
                     {
-                        // Generic/Legacy path: set legacy flag, sample directly
-                        // Save root transform so root-motion curves don't teleport the object
+                        // Save root + intermediate transforms (e.g. "Armature")
+                        // so root-motion / container curves don't teleport the object
                         var savedPos = skinExp.transform.localPosition;
                         var savedRot = skinExp.transform.localRotation;
+                        var smr = skinExp.GetComponentInChildren<SkinnedMeshRenderer>();
+                        var savedInter = new System.Collections.Generic.List<(Transform t, Vector3 p, Quaternion r)>();
+                        if (smr != null && smr.rootBone != null && smr.rootBone != skinExp.transform)
+                        {
+                            for (Transform w = smr.rootBone; w != null && w != skinExp.transform; w = w.parent)
+                                savedInter.Add((w, w.localPosition, w.localRotation));
+                        }
+
                         bool wasLegacy = animClip.legacy;
                         animClip.legacy = true;
                         animClip.SampleAnimation(skinExp.gameObject, elapsedSec);
                         animClip.legacy = wasLegacy;
+
                         skinExp.transform.localPosition = savedPos;
                         skinExp.transform.localRotation = savedRot;
+                        foreach (var (t, p, r) in savedInter)
+                        { t.localPosition = p; t.localRotation = r; }
                     }
                     else
                     {
@@ -1068,20 +1067,29 @@ namespace SplashEdit.RuntimeCode
                             _skinAnimatorCache.TryGetValue(evt.TargetObjectName, out var animator);
                             if (animator != null)
                             {
-                                // Save root transforms so root-motion doesn't teleport the object
+                                // Save root + intermediate transforms
                                 var savedExpPos = skinExp.transform.localPosition;
                                 var savedExpRot = skinExp.transform.localRotation;
                                 var savedAnimPos = animator.transform.localPosition;
                                 var savedAnimRot = animator.transform.localRotation;
+                                var smrH = skinExp.GetComponentInChildren<SkinnedMeshRenderer>();
+                                var savedInterH = new System.Collections.Generic.List<(Transform t, Vector3 p, Quaternion r)>();
+                                if (smrH != null && smrH.rootBone != null && smrH.rootBone != skinExp.transform)
+                                {
+                                    for (Transform w = smrH.rootBone; w != null && w != skinExp.transform; w = w.parent)
+                                        savedInterH.Add((w, w.localPosition, w.localRotation));
+                                }
 
                                 if (!didBeginSampling) { AnimationMode.BeginSampling(); didBeginSampling = true; }
                                 AnimationMode.SampleAnimationClip(animator.gameObject, animClip, elapsedSec);
 
-                                // Restore root transforms
+                                // Restore root + intermediate transforms
                                 skinExp.transform.localPosition = savedExpPos;
                                 skinExp.transform.localRotation = savedExpRot;
                                 animator.transform.localPosition = savedAnimPos;
                                 animator.transform.localRotation = savedAnimRot;
+                                foreach (var (t, p, r) in savedInterH)
+                                { t.localPosition = p; t.localRotation = r; }
                             }
                         }
                     }

@@ -634,7 +634,7 @@ namespace SplashEdit.RuntimeCode
                         writer.Write((byte)name.Length);
                         audioNameOffsetPositions.Add(writer.BaseStream.Position);
                         writer.Write((uint)0);  // nameOffset placeholder
-                        audioClipNames.Add(name);
+                        audioClipNames.Add(name); 
                     }
 
                     // Phase 2: Write name strings (after all metadata entries)

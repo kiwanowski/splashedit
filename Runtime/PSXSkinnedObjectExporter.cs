@@ -36,6 +36,9 @@ namespace SplashEdit.RuntimeCode
         [Tooltip("Flat vertex color (used when ColorMode is FlatColor).")]
         public Color32 FlatVertexColor = new Color32(128, 128, 128, 255);
 
+        [Tooltip("Smooth normals for lighting. Disable for flat/faceted shading.")]
+        public bool SmoothNormals = true;
+
         /// <summary>
         /// The proxy PSXObjectExporter created during export (lives on a temporary child GO).
         /// Null outside of export.
