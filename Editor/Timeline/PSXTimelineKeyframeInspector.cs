@@ -164,6 +164,23 @@ namespace SplashEdit.EditorCode
                     kf.Value = new Vector3(r, g, b);
                     break;
                 }
+                case PSXTrackType.RumbleSmall:
+                {
+                    bool rumbleOn = kf.Value.x > 0.5f;
+                    rumbleOn = EditorGUILayout.Toggle("Motor On", rumbleOn);
+                    kf.Value = new Vector3(rumbleOn ? 1f : 0f, 0, 0);
+                    EditorGUILayout.LabelField("  Small motor (right side, high frequency, on/off only)", EditorStyles.miniLabel);
+                    break;
+                }
+                case PSXTrackType.RumbleLarge:
+                {
+                    float speed = EditorGUILayout.Slider("Motor Speed", kf.Value.x, 0f, 255f);
+                    kf.Value = new Vector3(Mathf.Round(speed), 0, 0);
+                    EditorGUILayout.LabelField("  Large motor (left side, low frequency, 0-255 speed)", EditorStyles.miniLabel);
+                    if (speed > 0 && speed < 80)
+                        EditorGUILayout.HelpBox("Note: large motor typically starts spinning at ~80-96. Values below may not produce vibration.", MessageType.Info);
+                    break;
+                }
                 default:
                     kf.Value = EditorGUILayout.Vector3Field("Value", kf.Value);
                     break;
@@ -231,6 +248,12 @@ namespace SplashEdit.EditorCode
             {
                 EditorGUI.BeginDisabledGroup(true);
                 EditorGUILayout.TextField("Target", "(camera)");
+                EditorGUI.EndDisabledGroup();
+            }
+            else if (track.IsVibrationTrack)
+            {
+                EditorGUI.BeginDisabledGroup(true);
+                EditorGUILayout.TextField("Target", "(controller)");
                 EditorGUI.EndDisabledGroup();
             }
             else if (track.IsUITrack)

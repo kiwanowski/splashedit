@@ -35,5 +35,9 @@ namespace SplashEdit.RuntimeCode
         public bool IsCameraTrack => TrackType == PSXTrackType.CameraPosition ||
                                      TrackType == PSXTrackType.CameraRotation ||
                                      TrackType == PSXTrackType.CameraH;
+
+        /// <summary>Returns true if this is a vibration/rumble track.</summary>
+        public bool IsVibrationTrack => TrackType == PSXTrackType.RumbleSmall ||
+                                       TrackType == PSXTrackType.RumbleLarge;
     }
 }

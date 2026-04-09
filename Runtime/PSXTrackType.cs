@@ -13,5 +13,7 @@ namespace SplashEdit.RuntimeCode
         UIPosition = 8,
         UIColor = 9,
         CameraH = 10,
+        RumbleSmall = 11,
+        RumbleLarge = 12,
     }
 }

@@ -305,6 +305,22 @@ namespace SplashEdit.RuntimeCode
                                 writer.Write((short)0);
                                 break;
                             }
+                            case PSXTrackType.RumbleSmall:
+                            {
+                                // Step: values[0] = 0 (off) or 1 (on)
+                                writer.Write((short)(kf.Value.x > 0.5f ? 1 : 0));
+                                writer.Write((short)0);
+                                writer.Write((short)0);
+                                break;
+                            }
+                            case PSXTrackType.RumbleLarge:
+                            {
+                                // values[0] = motor speed 0-255
+                                writer.Write((short)Mathf.Clamp(Mathf.RoundToInt(kf.Value.x), 0, 255));
+                                writer.Write((short)0);
+                                writer.Write((short)0);
+                                break;
+                            }
                         }
                     }
 
@@ -460,6 +476,9 @@ namespace SplashEdit.RuntimeCode
                                  track.TrackType == PSXTrackType.CameraRotation ||
                                  track.TrackType == PSXTrackType.CameraH;
             if (isCameraTrack) return "";
+
+            // Vibration tracks are global (no target object)
+            if (track.IsVibrationTrack) return "";
 
             string name;
             if (track.IsUIElementTrack)
