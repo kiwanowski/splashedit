@@ -563,24 +563,106 @@ namespace SplashEdit.EditorCode
             }
 
             var menu = new GenericMenu();
-            foreach (PSXTrackType type in System.Enum.GetValues(typeof(PSXTrackType)))
-            {
-                // Filter camera tracks for animation clips
-                if (!_state.IsCutscene &&
-                    (type == PSXTrackType.CameraPosition || type == PSXTrackType.CameraRotation || type == PSXTrackType.CameraH))
-                    continue;
 
-                var t = type;
-                menu.AddItem(new GUIContent(PSXTimelineDrawer.GetTrackLabel(new PSXCutsceneTrack { TrackType = t })),
-                    false, () =>
-                {
-                    if (_state.Tracks == null) return;
-                    _state.Tracks.Add(new PSXCutsceneTrack { TrackType = t });
-                    EditorUtility.SetDirty(_state.Clip);
-                    Repaint();
-                });
+            // ── Camera tracks (cutscene only) ──
+            if (_state.IsCutscene)
+            {
+                menu.AddItem(new GUIContent("Camera/Position"), false, () => AddTrack(PSXTrackType.CameraPosition));
+                menu.AddItem(new GUIContent("Camera/Rotation"), false, () => AddTrack(PSXTrackType.CameraRotation));
+                menu.AddItem(new GUIContent("Camera/FOV (H)"), false, () => AddTrack(PSXTrackType.CameraH));
             }
+
+            // ── Object tracks: submenu per scene object ──
+            var objects = Object.FindObjectsByType<PSXObjectExporter>(FindObjectsSortMode.None);
+            if (objects.Length > 0)
+            {
+                foreach (var obj in objects)
+                {
+                    string n = obj.gameObject.name;
+                    menu.AddItem(new GUIContent($"Object/{n}/Position"), false,
+                        () => AddTrack(PSXTrackType.ObjectPosition, objectName: n));
+                    menu.AddItem(new GUIContent($"Object/{n}/Rotation"), false,
+                        () => AddTrack(PSXTrackType.ObjectRotation, objectName: n));
+                    menu.AddItem(new GUIContent($"Object/{n}/Active"), false,
+                        () => AddTrack(PSXTrackType.ObjectActive, objectName: n));
+                }
+            }
+            else
+            {
+                menu.AddDisabledItem(new GUIContent("Object/(no PSXObjectExporters in scene)"));
+            }
+
+            // ── UI Canvas Visible track ──
+            var canvases = Object.FindObjectsByType<PSXCanvas>(FindObjectsSortMode.None);
+            if (canvases.Length > 0)
+            {
+                foreach (var canvas in canvases)
+                {
+                    string cn = canvas.CanvasName;
+                    menu.AddItem(new GUIContent($"UI Canvas/{cn}/Visible"), false,
+                        () => AddTrack(PSXTrackType.UICanvasVisible, canvasName: cn));
+
+                    // Gather all UI elements under this canvas
+                    var elements = new List<(string name, string type)>();
+                    foreach (var img in canvas.GetComponentsInChildren<PSXUIImage>(true))
+                        elements.Add((img.ElementName, "Image"));
+                    foreach (var box in canvas.GetComponentsInChildren<PSXUIBox>(true))
+                        elements.Add((box.ElementName, "Box"));
+                    foreach (var txt in canvas.GetComponentsInChildren<PSXUIText>(true))
+                        elements.Add((txt.ElementName, "Text"));
+                    foreach (var bar in canvas.GetComponentsInChildren<PSXUIProgressBar>(true))
+                        elements.Add((bar.ElementName, "Progress"));
+
+                    if (elements.Count > 0)
+                    {
+                        foreach (var (elName, elType) in elements)
+                        {
+                            string prefix = $"UI Canvas/{cn}/{elName} ({elType})";
+                            menu.AddItem(new GUIContent($"{prefix}/Visible"), false,
+                                () => AddTrack(PSXTrackType.UIElementVisible, canvasName: cn, elementName: elName));
+                            menu.AddItem(new GUIContent($"{prefix}/Position"), false,
+                                () => AddTrack(PSXTrackType.UIPosition, canvasName: cn, elementName: elName));
+                            menu.AddItem(new GUIContent($"{prefix}/Color"), false,
+                                () => AddTrack(PSXTrackType.UIColor, canvasName: cn, elementName: elName));
+
+                            // Progress only for progress bars
+                            if (elType == "Progress")
+                            {
+                                menu.AddItem(new GUIContent($"{prefix}/Progress"), false,
+                                    () => AddTrack(PSXTrackType.UIProgress, canvasName: cn, elementName: elName));
+                            }
+                        }
+                    }
+                    else
+                    {
+                        menu.AddDisabledItem(new GUIContent($"UI Canvas/{cn}/(no UI elements)"));
+                    }
+                }
+            }
+            else
+            {
+                menu.AddDisabledItem(new GUIContent("UI Canvas/(no PSXCanvas in scene)"));
+            }
+
+            // ── Rumble tracks ──
+            menu.AddItem(new GUIContent("Rumble/Small Motor"), false, () => AddTrack(PSXTrackType.RumbleSmall));
+            menu.AddItem(new GUIContent("Rumble/Large Motor"), false, () => AddTrack(PSXTrackType.RumbleLarge));
+
             menu.ShowAsContext();
+        }
+
+        private void AddTrack(PSXTrackType type, string objectName = "", string canvasName = "", string elementName = "")
+        {
+            if (_state.Tracks == null) return;
+            _state.Tracks.Add(new PSXCutsceneTrack
+            {
+                TrackType = type,
+                ObjectName = objectName,
+                UICanvasName = canvasName,
+                UIElementName = elementName,
+            });
+            EditorUtility.SetDirty(_state.Clip);
+            Repaint();
         }
 
         // =====================================================================
