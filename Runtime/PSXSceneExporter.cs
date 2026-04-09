@@ -277,6 +277,14 @@ namespace SplashEdit.RuntimeCode
                 _navRegionBuilder.WalkableSlopeAngle = player.WalkableSlopeAngle;
                 _navRegionBuilder.CellSize = player.NavCellSize;
                 _navRegionBuilder.CellHeight = player.NavCellHeight;
+                _navRegionBuilder.MinRegionArea = player.NavMinRegionArea;
+                _navRegionBuilder.MergeRegionArea = player.NavMergeRegionArea;
+                _navRegionBuilder.MaxSimplifyError = player.NavMaxSimplifyError;
+                _navRegionBuilder.MaxEdgeLength = player.NavMaxEdgeLength;
+                _navRegionBuilder.PartitionMethod = player.NavPartitionMethod;
+                _navRegionBuilder.DetailSampleDist = player.NavDetailSampleDist;
+                _navRegionBuilder.DetailMaxError = player.NavDetailMaxError;
+                _navRegionBuilder.MaxPlaneError = player.NavMaxPlaneError;
             }
             // Pass PSXRoom volumes so nav regions get spatial room assignment
             // instead of BFS connectivity. This ensures nav region roomIndex

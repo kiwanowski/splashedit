@@ -17,13 +17,40 @@ namespace SplashEdit.RuntimeCode
     /// </summary>
     public class PSXNavRegionBuilder
     {
+        // ────────────────────────────────────────────────────────────────
+        // Agent parameters
+        // ────────────────────────────────────────────────────────────────
         public float AgentHeight = 1.8f;
         public float AgentRadius = 0.3f;
         public float MaxStepHeight = 0.35f;
         public float WalkableSlopeAngle = 46.0f;
+
+        // ────────────────────────────────────────────────────────────────
+        // Voxelization parameters
+        // ────────────────────────────────────────────────────────────────
         public float CellSize = 0.05f;
         public float CellHeight = 0.025f;
-        public float MergePlaneError = 0.1f;
+
+        // ────────────────────────────────────────────────────────────────
+        // Region parameters (previously hardcoded)
+        // ────────────────────────────────────────────────────────────────
+        public int MinRegionArea = 8;
+        public int MergeRegionArea = 20;
+        public float MaxSimplifyError = 1.3f;
+        public float MaxEdgeLength = 12.0f;
+        public NavPartitionMethod PartitionMethod = NavPartitionMethod.Watershed;
+
+        // ────────────────────────────────────────────────────────────────
+        // Detail mesh parameters (decoupled from CellHeight)
+        // ────────────────────────────────────────────────────────────────
+        public float DetailSampleDist = 6.0f;   // Multiplier of CellSize
+        public float DetailMaxError = 0.025f;    // World units, independent of CellHeight
+
+        // ────────────────────────────────────────────────────────────────
+        // Plane fit validation
+        // ────────────────────────────────────────────────────────────────
+        public float MaxPlaneError = 0.15f;
+
         public const int MaxVertsPerRegion = 8;
 
         private List<NavRegionExport> _regions = new();
@@ -51,6 +78,8 @@ namespace SplashEdit.RuntimeCode
             public Plane floorPlane;
             public List<Vector3> worldTris = new();
             public List<int> sourceTriIndices = new();
+            /// <summary>Maximum deviation of any sample point from the fitted plane (world units).</summary>
+            public float maxPlaneDeviation;
         }
 
         public struct NavPortalExport
@@ -96,13 +125,13 @@ namespace SplashEdit.RuntimeCode
             int walkableHeight = (int)Math.Ceiling(AgentHeight / ch);
             int walkableClimb = (int)Math.Floor(MaxStepHeight / ch);
             int walkableRadius = (int)Math.Ceiling(AgentRadius / cs);
-            int maxEdgeLen = (int)(12.0f / cs);
-            float maxSimplificationError = 1.3f;
-            int minRegionArea = 8;
-            int mergeRegionArea = 20;
-            int maxVertsPerPoly = 6;
-            float detailSampleDist = cs * 6;
-            float detailSampleMaxError = ch * 1;
+            int maxEdgeLen = (int)(MaxEdgeLength / cs);
+            float maxSimplificationError = MaxSimplifyError;
+            int minRegionArea = MinRegionArea;
+            int mergeRegionArea = MergeRegionArea;
+            int maxVertsPerPoly = MaxVertsPerRegion;      // Match PS1 runtime struct (8)
+            float detailSampleDist = cs * DetailSampleDist;
+            float detailSampleMaxError = DetailMaxError;  // Decoupled from CellHeight
 
             // 3. Compute bounds with border padding
             float bminX = float.MaxValue, bminY = float.MaxValue, bminZ = float.MaxValue;
@@ -148,9 +177,21 @@ namespace SplashEdit.RuntimeCode
             // Erode walkable area
             RcAreas.ErodeWalkableArea(ctx, walkableRadius, chf);
 
-            // Build distance field and regions
-            RcRegions.BuildDistanceField(ctx, chf);
-            RcRegions.BuildRegions(ctx, chf, minRegionArea, mergeRegionArea);
+            // Build distance field and regions using selected partition method
+            switch (PartitionMethod)
+            {
+                case NavPartitionMethod.Monotone:
+                    RcRegions.BuildRegionsMonotone(ctx, chf, minRegionArea, mergeRegionArea);
+                    break;
+                case NavPartitionMethod.Layer:
+                    RcRegions.BuildLayerRegions(ctx, chf, minRegionArea);
+                    break;
+                case NavPartitionMethod.Watershed:
+                default:
+                    RcRegions.BuildDistanceField(ctx, chf);
+                    RcRegions.BuildRegions(ctx, chf, minRegionArea, mergeRegionArea);
+                    break;
+            }
 
             // Build contours
             var cset = RcContours.BuildContours(ctx, chf, maxSimplificationError, maxEdgeLen,
@@ -218,6 +259,25 @@ namespace SplashEdit.RuntimeCode
                 {
                     region.vertsXZ.Reverse();
                     pts3d.Reverse();
+                }
+
+                // Include ALL detail mesh vertices (including interior samples) for
+                // a much better least-squares plane fit on terrain. The detail mesh
+                // stores sub-triangulated height data that captures valleys and ridges
+                // that polygon corners alone would miss.
+                if (dmesh != null && i < dmesh.nmeshes)
+                {
+                    int vbase = dmesh.meshes[i * 4 + 0];
+                    int vcount = dmesh.meshes[i * 4 + 1];
+                    // Detail mesh stores polygon boundary verts first (already added above as pts3d),
+                    // followed by interior verts. Only add interior verts to avoid duplicates.
+                    for (int dv = nv; dv < vcount; dv++)
+                    {
+                        float dx = dmesh.verts[(vbase + dv) * 3 + 0];
+                        float dy = dmesh.verts[(vbase + dv) * 3 + 1];
+                        float dz = dmesh.verts[(vbase + dv) * 3 + 2];
+                        pts3d.Add(new Vector3(dx, dy, dz));
+                    }
                 }
 
                 FitPlane(region, pts3d);
@@ -377,7 +437,7 @@ namespace SplashEdit.RuntimeCode
         void FitPlane(NavRegionExport r, List<Vector3> pts)
         {
             int n = pts.Count;
-            if (n < 3) { r.planeA = 0; r.planeB = 0; r.planeD = n > 0 ? pts[0].y : 0; r.surfaceType = NavSurfaceType.Flat; return; }
+            if (n < 3) { r.planeA = 0; r.planeB = 0; r.planeD = n > 0 ? pts[0].y : 0; r.surfaceType = NavSurfaceType.Flat; r.maxPlaneDeviation = 0; return; }
 
             if (n == 3)
             {
@@ -410,6 +470,16 @@ namespace SplashEdit.RuntimeCode
                     r.planeD = (float)((sXX * (sZZ * sY - sZ * sZY) - sXZ * (sXZ * sY - sZY * sX) + sXY * (sXZ * sZ - sZZ * sX)) * inv);
                 }
             }
+
+            // Compute max deviation of any sample point from the fitted plane
+            float maxDev = 0;
+            foreach (var p in pts)
+            {
+                float predicted = r.planeA * p.x + r.planeB * p.z + r.planeD;
+                float dev = Mathf.Abs(p.y - predicted);
+                if (dev > maxDev) maxDev = dev;
+            }
+            r.maxPlaneDeviation = maxDev;
 
             float slope = Mathf.Atan(Mathf.Sqrt(r.planeA * r.planeA + r.planeB * r.planeB)) * Mathf.Rad2Deg;
             r.surfaceType = slope < 3f ? NavSurfaceType.Flat : slope < 25f ? NavSurfaceType.Ramp : NavSurfaceType.Stairs;
