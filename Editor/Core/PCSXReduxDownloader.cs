@@ -98,7 +98,10 @@ namespace SplashEdit.EditorCode
                 log?.Invoke($"Downloading: {downloadUrl}");
 
                 // Step 3: Download the file
-                string tempFile = Path.Combine(Path.GetTempPath(), $"pcsx-redux-{latestBuildId}.zip");
+                // Derive the correct extension from the actual download path (e.g. .dmg, .zip, .tar.gz)
+                string downloadExt = downloadPath.EndsWith(".tar.gz") ? ".tar.gz"
+                    : Path.GetExtension(downloadPath);
+                string tempFile = Path.Combine(Path.GetTempPath(), $"pcsx-redux-{latestBuildId}{downloadExt}");
                 EditorUtility.DisplayProgressBar("Downloading PCSX-Redux", "Downloading...", 0.1f);
 
                 using (var client = new System.Net.WebClient())
@@ -124,8 +127,85 @@ namespace SplashEdit.EditorCode
                     Directory.Delete(installDir, true);
                 Directory.CreateDirectory(installDir);
 
-                if ((Application.platform == RuntimePlatform.LinuxEditor ||
-                     Application.platform == RuntimePlatform.OSXEditor) && tempFile.EndsWith(".tar.gz"))
+                if (Application.platform == RuntimePlatform.OSXEditor && tempFile.EndsWith(".dmg"))
+                {
+                    string mountPoint = Path.Combine(Path.GetTempPath(), $"pcsx-redux-mount-{latestBuildId}");
+                    Directory.CreateDirectory(mountPoint);
+                    try
+                    {
+                        // Mount the DMG
+                        var attachPsi = new ProcessStartInfo
+                        {
+                            FileName = "hdiutil",
+                            Arguments = $"attach -nobrowse -quiet -mountpoint \"{mountPoint}\" \"{tempFile}\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
+                        var attachProc = Process.Start(attachPsi);
+                        attachProc?.WaitForExit();
+                        if (attachProc?.ExitCode != 0)
+                        {
+                            log?.Invoke($"Failed to mount DMG (hdiutil exit code {attachProc?.ExitCode}).");
+                            EditorUtility.ClearProgressBar();
+                            return false;
+                        }
+
+                        // Find the .app bundle inside the mounted image.
+                        // Prefer "PCSX-Redux.app" by name; fall back to the first .app found.
+                        string appBundle = null;
+                        foreach (string entry in Directory.GetFileSystemEntries(mountPoint))
+                        {
+                            if (Path.GetFileName(entry).Equals("PCSX-Redux.app", StringComparison.OrdinalIgnoreCase))
+                            {
+                                appBundle = entry;
+                                break;
+                            }
+                            if (appBundle == null && entry.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+                                appBundle = entry;
+                        }
+
+                        if (appBundle != null)
+                        {
+                            // Copy the .app into the install dir
+                            string destApp = Path.Combine(installDir, Path.GetFileName(appBundle));
+                            var cpPsi = new ProcessStartInfo
+                            {
+                                FileName = "cp",
+                                Arguments = $"-R \"{appBundle}\" \"{destApp}\"",
+                                UseShellExecute = false,
+                                CreateNoWindow = true
+                            };
+                            var cpProc = Process.Start(cpPsi);
+                            cpProc?.WaitForExit();
+                            if (cpProc?.ExitCode != 0)
+                                log?.Invoke($"Warning: cp exited with code {cpProc?.ExitCode} when copying {Path.GetFileName(appBundle)}.");
+                            else
+                                log?.Invoke($"Copied {Path.GetFileName(appBundle)} to {installDir}");
+                        }
+                        else
+                        {
+                            log?.Invoke("No .app bundle found in DMG.");
+                        }
+                    }
+                    finally
+                    {
+                        // Always detach; log a warning if it fails so users know the volume is still mounted
+                        var detachPsi = new ProcessStartInfo
+                        {
+                            FileName = "hdiutil",
+                            Arguments = $"detach \"{mountPoint}\" -quiet -force",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
+                        var detachProc = Process.Start(detachPsi);
+                        detachProc?.WaitForExit();
+                        if (detachProc?.ExitCode != 0)
+                            log?.Invoke($"Warning: hdiutil detach failed (exit code {detachProc?.ExitCode}). You may need to eject the volume manually.");
+                        try { Directory.Delete(mountPoint, true); } catch (Exception ex) { log?.Invoke($"Warning: could not remove mount point directory: {ex.Message}"); }
+                    }
+                }
+                else if ((Application.platform == RuntimePlatform.LinuxEditor ||
+                          Application.platform == RuntimePlatform.OSXEditor) && tempFile.EndsWith(".tar.gz"))
                 {
                     var psi = new ProcessStartInfo
                     {
@@ -136,7 +216,6 @@ namespace SplashEdit.EditorCode
                     };
                     var proc = Process.Start(psi);
                     proc?.WaitForExit();
-
                 }
                 else
                 {
@@ -144,10 +223,9 @@ namespace SplashEdit.EditorCode
                     log?.Invoke($"Extracted to {installDir}");
                 }
 
-                // Make executable
-
-                if(Application.platform == RuntimePlatform.LinuxEditor ||
-                   Application.platform == RuntimePlatform.OSXEditor) {
+                // Make executable (Linux AppImage only; macOS .app preserves permissions from DMG)
+                if (Application.platform == RuntimePlatform.LinuxEditor)
+                {
                     var psi = new ProcessStartInfo
                     {
                         FileName = "chmod",

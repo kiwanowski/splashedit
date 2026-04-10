@@ -42,6 +42,8 @@ namespace SplashEdit.EditorCode
                         return Path.Combine(PCSXReduxDir, "pcsx-redux.exe");
                     case RuntimePlatform.LinuxEditor:
                         return Path.Combine(PCSXReduxDir, "PCSX-Redux-HEAD-x86_64.AppImage");
+                    case RuntimePlatform.OSXEditor:
+                        return Path.Combine(PCSXReduxDir, "PCSX-Redux.app", "Contents", "MacOS", "PCSX-Redux");
                     default:
                         return Path.Combine(PCSXReduxDir, "pcsx-redux");
                 }
