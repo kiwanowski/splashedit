@@ -110,6 +110,24 @@ namespace SplashEdit.EditorCode
         }
 
         /// <summary>
+        /// Gets the VRAM data output path for a scene by index.
+        /// Contains atlas pixel data, CLUT data, and font pixel data.
+        /// </summary>
+        public static string GetSceneVramPath(int sceneIndex, string sceneName)
+        {
+            return Path.Combine(BuildOutputDir, $"scene_{sceneIndex}.vram");
+        }
+
+        /// <summary>
+        /// Gets the SPU data output path for a scene by index.
+        /// Contains audio ADPCM data for upload to SPU RAM.
+        /// </summary>
+        public static string GetSceneSpuPath(int sceneIndex, string sceneName)
+        {
+            return Path.Combine(BuildOutputDir, $"scene_{sceneIndex}.spu");
+        }
+
+        /// <summary>
         /// Default license file path (SPLASHLICENSE.DAT) shipped in the package Data folder.
         /// Resolved relative to the Unity project so it works on any machine.
         /// </summary>

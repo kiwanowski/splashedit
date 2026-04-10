@@ -85,9 +85,12 @@ namespace SplashEdit.RuntimeCode
         // ═══════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Serialize the scene to a splashpack v16 binary file.
+        /// Serialize the scene to splashpack v20 format: three separate files.
+        /// - path                  → .splashpack (live data only)
+        /// - path.Replace(…).vram  → VRAM bulk data (atlas pixels + CLUTs + font pixels)
+        /// - path.Replace(…).spu   → SPU bulk data (audio ADPCM)
         /// </summary>
-        /// <param name="path">Absolute file path to write.</param>
+        /// <param name="path">Absolute file path to write (splashpack).</param>
         /// <param name="scene">Pre-built scene data.</param>
         /// <param name="log">Optional callback for progress messages.</param>
         public static void Write(string path, in SceneData scene, Action<string, LogType> log = null)
@@ -151,11 +154,11 @@ namespace SplashEdit.RuntimeCode
                     exporterIndex[scene.exporters[i]] = i;
 
                 // ──────────────────────────────────────────────────────
-                // Header (120 bytes — splashpack v19)
+                // Header (120 bytes — splashpack v20)
                 // ──────────────────────────────────────────────────────
                 writer.Write('S');
                 writer.Write('P');
-                writer.Write((ushort)19);
+                writer.Write((ushort)20);
                 writer.Write((ushort)luaFiles.Count);
                 writer.Write((ushort)scene.exporters.Length);
                 writer.Write((ushort)scene.atlases.Length);
@@ -955,103 +958,171 @@ namespace SplashEdit.RuntimeCode
                 }
 
                 // ══════════════════════════════════════════════════════
-                // DEAD ZONE — pixel/audio bulk data (freed after VRAM/SPU upload)
-                // Everything written after this point is not needed at runtime.
-                // You may be asking why we don't just put pixel/audio data in separate files 
-                // or why don't we put this data at the end of the file to begin with. The answer is
-                // Very simple and I'm going to tell it to you right now... OH GOD I FORGOT TO TURN OFF THE STOVE (runs away)
+                // NO MORE DEAD ZONE — pixel/audio data goes into separate files.
+                // pixelDataOffset is written as 0 to signal v20 format.
                 // ══════════════════════════════════════════════════════
-                AlignToFourBytes(writer);
-                long pixelDataStart = writer.BaseStream.Position;
 
-                // Atlas pixel data
-                foreach (TextureAtlas atlas in scene.atlases)
-                {
-                    AlignToFourBytes(writer);
-                    atlasOffset.DataOffsets.Add(writer.BaseStream.Position);
-
-                    for (int y = 0; y < atlas.vramPixels.GetLength(1); y++)
-                        for (int x = 0; x < atlas.vramPixels.GetLength(0); x++)
-                            writer.Write(atlas.vramPixels[x, y].Pack());
-                }
-
-                // CLUT data
-                foreach (TextureAtlas atlas in scene.atlases)
-                {
-                    foreach (var texture in atlas.ContainedTextures)
-                    {
-                        if (texture.ColorPalette != null)
-                        {
-                            AlignToFourBytes(writer);
-                            clutOffset.DataOffsets.Add(writer.BaseStream.Position);
-
-                            foreach (VRAMPixel color in texture.ColorPalette)
-                                writer.Write((ushort)color.Pack());
-                        }
-                    }
-                }
-
-                // Audio ADPCM data
-                if (audioClipCount > 0 && scene.audioClips != null)
-                {
-                    for (int i = 0; i < audioClipCount; i++)
-                    {
-                        byte[] data = scene.audioClips[i].adpcmData;
-                        if (data != null && data.Length > 0)
-                        {
-                            AlignToFourBytes(writer);
-                            long dataPos = writer.BaseStream.Position;
-                            writer.Write(data);
-
-                            long curPos = writer.BaseStream.Position;
-                            writer.Seek((int)audioDataOffsetPositions[i], SeekOrigin.Begin);
-                            writer.Write((uint)dataPos);
-                            writer.Seek((int)curPos, SeekOrigin.Begin);
-                        }
-                    }
-
-                    int totalAudioBytes = 0;
-                    foreach (var clip in scene.audioClips)
-                        if (clip.adpcmData != null) totalAudioBytes += clip.adpcmData.Length;
-                    log?.Invoke($"{audioClipCount} audio clips ({totalAudioBytes / 1024}KB ADPCM) written.", LogType.Log);
-                }
-
-                // Font pixel data
-                if (scene.fonts != null)
-                {
-                    for (int fi = 0; fi < scene.fonts.Length; fi++)
-                    {
-                        var font = scene.fonts[fi];
-                        if (font.PixelData == null || font.PixelData.Length == 0) continue;
-
-                        AlignToFourBytes(writer);
-                        long dataPos = writer.BaseStream.Position;
-                        writer.Write(font.PixelData);
-
-                        long curPos = writer.BaseStream.Position;
-                        writer.Seek((int)fontDataOffsetPositions[fi], SeekOrigin.Begin);
-                        writer.Write((uint)dataPos);
-                        writer.Seek((int)curPos, SeekOrigin.Begin);
-                    }
-                }
-
-                // Backfill pixelDataOffset in header
+                // Backfill pixelDataOffset as 0 (signals: no dead zone in this file)
                 {
                     long curPos = writer.BaseStream.Position;
                     writer.Seek((int)pixelDataOffsetPos, SeekOrigin.Begin);
-                    writer.Write((uint)pixelDataStart);
+                    writer.Write((uint)0);
                     writer.Seek((int)curPos, SeekOrigin.Begin);
                 }
 
-                long totalSize = writer.BaseStream.Position;
-                long deadBytes = totalSize - pixelDataStart;
-                log?.Invoke($"Pixel/audio dead zone: {deadBytes / 1024}KB (freed after VRAM/SPU upload).", LogType.Log);
+                // Atlas metadata still needs valid VRAM coordinates for rendering,
+                // but polygonsOffset/clutOffset are no longer used (data is in .vram file).
+                // Write 0 for all atlas and CLUT data offsets.
+                foreach (var pos in atlasOffset.PlaceholderPositions)
+                {
+                    long curPos = writer.BaseStream.Position;
+                    writer.Seek((int)pos, SeekOrigin.Begin);
+                    writer.Write((uint)0);
+                    writer.Seek((int)curPos, SeekOrigin.Begin);
+                }
+                foreach (var pos in clutOffset.PlaceholderPositions)
+                {
+                    long curPos = writer.BaseStream.Position;
+                    writer.Seek((int)pos, SeekOrigin.Begin);
+                    writer.Write((uint)0);
+                    writer.Seek((int)curPos, SeekOrigin.Begin);
+                }
 
-                // Backfill offsets
+                // Audio ADPCM data offset placeholders → 0 (data is in .spu file)
+                foreach (var pos in audioDataOffsetPositions)
+                {
+                    long curPos = writer.BaseStream.Position;
+                    writer.Seek((int)pos, SeekOrigin.Begin);
+                    writer.Write((uint)0);
+                    writer.Seek((int)curPos, SeekOrigin.Begin);
+                }
+
+                // Font pixel data offset placeholders → 0 (data is in .vram file)
+                foreach (var pos in fontDataOffsetPositions)
+                {
+                    long curPos = writer.BaseStream.Position;
+                    writer.Seek((int)pos, SeekOrigin.Begin);
+                    writer.Write((uint)0);
+                    writer.Seek((int)curPos, SeekOrigin.Begin);
+                }
+
+                // Backfill live data offsets (lua, mesh — these still point within the splashpack)
                 BackfillOffsets(writer, luaOffset, "lua", log);
                 BackfillOffsets(writer, meshOffset, "mesh", log);
-                BackfillOffsets(writer, atlasOffset, "atlas", log);
-                BackfillOffsets(writer, clutOffset, "clut", log);
+            }
+
+            // ══════════════════════════════════════════════════════════════
+            // Write VRAM file (.vram) — atlas pixels + CLUT data + font pixels
+            // Format: VRM header + per-atlas entries + per-CLUT entries + per-font entries
+            // Each entry: metadata + inline pixel data (self-contained, no offsets)
+            // ══════════════════════════════════════════════════════════════
+            {
+                string vramPath = System.IO.Path.ChangeExtension(path, ".vram");
+                using (BinaryWriter vw = new BinaryWriter(
+                    new FileStream(vramPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite)))
+                {
+                    // VRM header (8 bytes)
+                    vw.Write((byte)'V');
+                    vw.Write((byte)'R');
+                    vw.Write((ushort)scene.atlases.Length);
+                    vw.Write((ushort)clutCount);
+                    vw.Write((byte)(scene.fonts?.Length ?? 0));
+                    vw.Write((byte)0); // pad
+
+                    // Per-atlas: vramX(u16) vramY(u16) width(u16) height(u16) + pixel data
+                    foreach (TextureAtlas atlas in scene.atlases)
+                    {
+                        vw.Write((ushort)atlas.PositionX);
+                        vw.Write((ushort)atlas.PositionY);
+                        vw.Write((ushort)atlas.Width);
+                        vw.Write((ushort)TextureAtlas.Height);
+                        // Inline pixel data: width × height × 2 bytes
+                        for (int y = 0; y < atlas.vramPixels.GetLength(1); y++)
+                            for (int x = 0; x < atlas.vramPixels.GetLength(0); x++)
+                                vw.Write(atlas.vramPixels[x, y].Pack());
+                        AlignToFourBytes(vw);
+                    }
+
+                    // Per-CLUT: clutPackingX(u16) clutPackingY(u16) length(u16) pad(u16) + data
+                    foreach (TextureAtlas atlas in scene.atlases)
+                    {
+                        foreach (var texture in atlas.ContainedTextures)
+                        {
+                            if (texture.ColorPalette != null)
+                            {
+                                vw.Write((ushort)texture.ClutPackingX);
+                                vw.Write((ushort)texture.ClutPackingY);
+                                vw.Write((ushort)texture.ColorPalette.Count);
+                                vw.Write((ushort)0); // pad
+                                foreach (VRAMPixel color in texture.ColorPalette)
+                                    vw.Write((ushort)color.Pack());
+                                AlignToFourBytes(vw);
+                            }
+                        }
+                    }
+
+                    // Per-font: glyphW(u8) glyphH(u8) vramX(u16) vramY(u16) textureH(u16) dataSize(u32) + pixel data
+                    if (scene.fonts != null)
+                    {
+                        foreach (var font in scene.fonts)
+                        {
+                            vw.Write(font.GlyphWidth);
+                            vw.Write(font.GlyphHeight);
+                            vw.Write(font.VramX);
+                            vw.Write(font.VramY);
+                            vw.Write(font.TextureHeight);
+                            vw.Write((uint)(font.PixelData?.Length ?? 0));
+                            if (font.PixelData != null && font.PixelData.Length > 0)
+                                vw.Write(font.PixelData);
+                            AlignToFourBytes(vw);
+                        }
+                    }
+
+                    long vramSize = vw.BaseStream.Position;
+                    log?.Invoke($"VRAM data: {vramSize / 1024}KB written to {System.IO.Path.GetFileName(vramPath)}", LogType.Log);
+                }
+            }
+
+            // ══════════════════════════════════════════════════════════════
+            // Write SPU file (.spu) — audio ADPCM data
+            // Format: SPU header + per-clip entries
+            // Each entry: sizeBytes(u32) sampleRate(u16) loop(u8) pad(u8) + ADPCM data
+            // ══════════════════════════════════════════════════════════════
+            {
+                string spuPath = System.IO.Path.ChangeExtension(path, ".spu");
+                int audioClipCountForSpu = scene.audioClips?.Length ?? 0;
+                using (BinaryWriter sw = new BinaryWriter(
+                    new FileStream(spuPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite)))
+                {
+                    // SPU header (4 bytes)
+                    sw.Write((byte)'S');
+                    sw.Write((byte)'A');
+                    sw.Write((ushort)audioClipCountForSpu);
+
+                    // Per-clip: sizeBytes(u32) sampleRate(u16) loop(u8) pad(u8) + ADPCM data
+                    if (scene.audioClips != null)
+                    {
+                        foreach (var clip in scene.audioClips)
+                        {
+                            uint dataLen = (uint)(clip.adpcmData?.Length ?? 0);
+                            sw.Write(dataLen);
+                            sw.Write((ushort)clip.sampleRate);
+                            sw.Write((byte)(clip.loop ? 1 : 0));
+                            sw.Write((byte)0); // pad
+                            if (clip.adpcmData != null && clip.adpcmData.Length > 0)
+                                sw.Write(clip.adpcmData);
+                            AlignToFourBytes(sw);
+                        }
+                    }
+
+                    long spuSize = sw.BaseStream.Position;
+
+                    int totalAudioBytes = 0;
+                    if (scene.audioClips != null)
+                        foreach (var clip in scene.audioClips)
+                            if (clip.adpcmData != null) totalAudioBytes += clip.adpcmData.Length;
+                    log?.Invoke($"SPU data: {spuSize / 1024}KB ({audioClipCountForSpu} clips, {totalAudioBytes / 1024}KB ADPCM) written to {System.IO.Path.GetFileName(spuPath)}", LogType.Log);
+                }
             }
 
             log?.Invoke($"{totalFaces} faces written to {Path.GetFileName(path)}", LogType.Log);

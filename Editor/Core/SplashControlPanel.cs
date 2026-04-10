@@ -2143,7 +2143,7 @@ namespace SplashEdit.EditorCode
                     xml.AppendLine($"      <file name=\"MANIFEST.BIN\" source=\"{EscapeXml(manifestPath)}\"/>");
                 }
 
-                // Scene splashpacks and loading packs
+                // Scene splashpacks, VRAM data, SPU data, and loading packs
                 for (int i = 0; i < _sceneList.Count; i++)
                 {
                     string splashpack = SplashBuildPaths.GetSceneSplashpackPath(i, _sceneList[i].name);
@@ -2151,6 +2151,20 @@ namespace SplashEdit.EditorCode
                     {
                         string isoName = $"SCENE_{i}.SPK";
                         xml.AppendLine($"      <file name=\"{isoName}\" source=\"{EscapeXml(splashpack)}\"/>");
+                    }
+
+                    string vramFile = SplashBuildPaths.GetSceneVramPath(i, _sceneList[i].name);
+                    if (File.Exists(vramFile))
+                    {
+                        string isoName = $"SCENE_{i}.VRM";
+                        xml.AppendLine($"      <file name=\"{isoName}\" source=\"{EscapeXml(vramFile)}\"/>");
+                    }
+
+                    string spuFile = SplashBuildPaths.GetSceneSpuPath(i, _sceneList[i].name);
+                    if (File.Exists(spuFile))
+                    {
+                        string isoName = $"SCENE_{i}.SPU";
+                        xml.AppendLine($"      <file name=\"{isoName}\" source=\"{EscapeXml(spuFile)}\"/>");
                     }
 
                     string loadingPack = SplashBuildPaths.GetSceneLoaderPackPath(i, _sceneList[i].name);
