@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
@@ -45,7 +46,9 @@ namespace SplashEdit.EditorCode
                 case RuntimePlatform.LinuxEditor:
                     return "dev-linux-x64";
                 case RuntimePlatform.OSXEditor:
-                    return "dev-macos-arm";
+                    return RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+                        ? "dev-macos-arm"
+                        : "dev-macos-x64";
                 default:
                     return "dev-win-cli-x64";
             }
