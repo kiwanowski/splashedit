@@ -266,9 +266,12 @@ namespace SplashEdit.EditorCode
 
                 case KeyCode.Delete:
                 case KeyCode.Backspace:
-                    DeleteSelectedKeyframe();
-                    e.Use();
-                    Repaint();
+                    if (!EditorGUIUtility.editingTextField)
+                    {
+                        DeleteSelectedKeyframe();
+                        e.Use();
+                        Repaint();
+                    }
                     break;
             }
         }
