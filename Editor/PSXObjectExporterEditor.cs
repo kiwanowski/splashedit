@@ -15,6 +15,8 @@ namespace SplashEdit.EditorCode
         private SerializedProperty collisionTypeProp;
         private SerializedProperty vertexColorModeProp;
         private SerializedProperty flatVertexColorProp;
+        private SerializedProperty smoothNormalsProp;
+        private SerializedProperty isPlatformProp;
 
         private MeshFilter meshFilter;
         private MeshRenderer meshRenderer;
@@ -32,6 +34,8 @@ namespace SplashEdit.EditorCode
             collisionTypeProp = serializedObject.FindProperty("collisionType");
             vertexColorModeProp = serializedObject.FindProperty("vertexColorMode");
             flatVertexColorProp = serializedObject.FindProperty("flatVertexColor");
+            smoothNormalsProp = serializedObject.FindProperty("smoothNormals");
+            isPlatformProp = serializedObject.FindProperty("isPlatform");
 
             CacheMeshInfo();
         }
@@ -124,6 +128,9 @@ namespace SplashEdit.EditorCode
 
             EditorGUILayout.PropertyField(bitDepthProp, new GUIContent("Bit Depth"));
 
+            EditorGUILayout.PropertyField(smoothNormalsProp, new GUIContent("Smooth Normals",
+                "Smooth normals for lighting. Disable for flat/faceted shading."));
+
             EditorGUILayout.PropertyField(vertexColorModeProp, new GUIContent("Vertex Colors"));
             var vcMode = (VertexColorMode)vertexColorModeProp.enumValueIndex;
             if (vcMode == VertexColorMode.FlatColor)
@@ -188,6 +195,10 @@ namespace SplashEdit.EditorCode
                     "<color=#88aaff>Runtime AABB collider. Pushes player back + fires Lua events.</color>",
                     PSXEditorStyles.RichLabel);
             }
+
+            EditorGUILayout.Space(4);
+            EditorGUILayout.PropertyField(isPlatformProp, new GUIContent("Is Platform",
+                "All boundary edges of nav regions from this mesh allow walkoff. The player can walk off any edge and fall."));
 
             EditorGUI.indentLevel--;
         }
