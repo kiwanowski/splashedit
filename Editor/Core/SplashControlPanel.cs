@@ -27,10 +27,11 @@ namespace SplashEdit.EditorCode
         // ───── UI State ─────
         private Vector2 _scrollPos;
         private int _selectedTab = 0;
-        private static readonly string[] _tabNames = { "Dependencies", "Scenes", "Build" };
+        private static readonly string[] _tabNames = { "Dependencies", "Scenes", "Music (CD-DA)" , "Build"};
         private bool _showNativeProject = true;
         private bool _showToolchainSection = true;
         private bool _showScenesSection = true;
+        private bool _showMusicSection = true;
         private bool _showVRAMSection = true;
         private bool _showBuildSection = true;
 
@@ -42,6 +43,9 @@ namespace SplashEdit.EditorCode
 
         // ───── Scene List ─────
         private List<SceneEntry> _sceneList = new List<SceneEntry>();
+
+        // ───── Music List ─────
+        private List<MusicEntry> _musicList = new List<MusicEntry>();
 
         // ───── Memory Reports ─────
         private List<SceneMemoryReport> _memoryReports = new List<SceneMemoryReport>();
@@ -78,6 +82,13 @@ namespace SplashEdit.EditorCode
             public string name;
         }
 
+        private struct MusicEntry
+        {
+            public AudioClip asset;
+            public string path;
+            public string name;
+        }
+
         // ═══════════════════════════════════════════════════════════════
         // Menu & Window Lifecycle
         // ═══════════════════════════════════════════════════════════════
@@ -96,6 +107,7 @@ namespace SplashEdit.EditorCode
             SplashBuildPaths.EnsureDirectories();
             RefreshToolchainStatus();
             LoadSceneList();
+            LoadMusicList();
             _manualNativePath = SplashSettings.NativeProjectPath;
             FetchGitHubReleases();
             RefreshCurrentTag();
@@ -140,7 +152,10 @@ namespace SplashEdit.EditorCode
                 case 1: // Scenes
                     DrawScenesSection();
                     break;
-                case 2: // Build
+                case 2: // Music
+                    DrawMusicSection();
+                    break;
+                case 3: // Build
                     DrawBuildSection();
                     break;
             }
@@ -602,6 +617,115 @@ namespace SplashEdit.EditorCode
 
             // Handle drag & drop
             HandleSceneDragDrop();
+
+            EditorGUILayout.EndVertical();
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // Music Section
+        // ═══════════════════════════════════════════════════════════════
+
+        private void DrawMusicSection()
+        {
+            _showMusicSection = DrawSectionFoldout("Music", _showMusicSection);
+            if (!_showMusicSection) return;
+
+            EditorGUILayout.BeginVertical(PSXEditorStyles.CardStyle);
+
+            if (_musicList.Count == 0)
+            {
+                GUILayout.Label(
+                    "No music added yet.\n" +
+                    "Drag audio clips here, or use the buttons below to add them.",
+                    PSXEditorStyles.InfoBox);
+            }
+
+            // Draw scene list
+            int removeIndex = -1;
+            int moveUp = -1;
+            int moveDown = -1;
+
+            for (int i = 0; i < _musicList.Count; i++)
+            {
+                EditorGUILayout.BeginHorizontal();
+
+                // Index badge
+                GUILayout.Label($"[{i + 2}]", EditorStyles.miniLabel, GUILayout.Width(24));
+
+                // Scene asset field
+                var newAsset = (AudioClip)EditorGUILayout.ObjectField(
+                    _musicList[i].asset, typeof(AudioClip), false);
+                if (newAsset != _musicList[i].asset)
+                {
+                    var entry = _musicList[i];
+                    entry.asset = newAsset;
+                    if (newAsset != null)
+                    {
+                        entry.path = AssetDatabase.GetAssetPath(newAsset);
+                        entry.name = newAsset.name;
+                    }
+                    _musicList[i] = entry;
+                    SaveMusicList();
+                }
+
+                // Move buttons
+                EditorGUI.BeginDisabledGroup(i == 0);
+                if (GUILayout.Button("▲", EditorStyles.miniButtonLeft, GUILayout.Width(22)))
+                    moveUp = i;
+                EditorGUI.EndDisabledGroup();
+
+                EditorGUI.BeginDisabledGroup(i == _musicList.Count - 1);
+                if (GUILayout.Button("▼", EditorStyles.miniButtonRight, GUILayout.Width(22)))
+                    moveDown = i;
+                EditorGUI.EndDisabledGroup();
+
+                // Remove
+                if (GUILayout.Button("×", EditorStyles.miniButton, GUILayout.Width(20)))
+                    removeIndex = i;
+
+                EditorGUILayout.EndHorizontal();
+            }
+
+            // Apply deferred operations
+            if (removeIndex >= 0)
+            {
+                _musicList.RemoveAt(removeIndex);
+                SaveMusicList();
+            }
+            if (moveUp >= 1)
+            {
+                var temp = _musicList[moveUp];
+                _musicList[moveUp] = _musicList[moveUp - 1];
+                _musicList[moveUp - 1] = temp;
+                SaveMusicList();
+            }
+            if (moveDown >= 0 && moveDown < _musicList.Count - 1)
+            {
+                var temp = _musicList[moveDown];
+                _musicList[moveDown] = _musicList[moveDown + 1];
+                _musicList[moveDown + 1] = temp;
+                SaveMusicList();
+            }
+
+            // Add scene buttons
+            EditorGUILayout.Space(4);
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("+ Add Audio Clip...", EditorStyles.miniButton))
+            {
+                string path = EditorUtility.OpenFilePanel("Select Audio Clip", "Assets", "mp3,wav,ogg,aiff");
+                if (!string.IsNullOrEmpty(path))
+                {
+                    // Convert to project-relative path
+                    string projectPath = Application.dataPath;
+                    if (path.StartsWith(projectPath))
+                        path = "Assets" + path.Substring(projectPath.Length);
+                    AddMusicByPath(path);
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+
+            // Handle drag & drop
+            HandleMusicDragDrop();
 
             EditorGUILayout.EndVertical();
         }
@@ -2179,6 +2303,16 @@ namespace SplashEdit.EditorCode
                 xml.AppendLine("      <dummy sectors=\"128\"/>");
                 xml.AppendLine("    </directory_tree>");
                 xml.AppendLine("  </track>");
+
+                if (_musicList.Count > 0)
+                {
+                    foreach(MusicEntry music in _musicList)
+                    {
+                        string musicPath = Path.Combine(SplashBuildPaths.ProjectRoot, music.path);
+                        xml.AppendLine($"  <track type=\"audio\" source=\"{EscapeXml(musicPath)}\"/>");
+                    }
+                }
+
                 xml.AppendLine("</iso_project>");
 
                 File.WriteAllText(xmlPath, xml.ToString(), new System.Text.UTF8Encoding(false));
@@ -2650,6 +2784,95 @@ namespace SplashEdit.EditorCode
                 }
             }
         }
+
+        // ═══════════════════════════════════════════════════════════════
+        // Music List Persistence (EditorPrefs)
+        // ═══════════════════════════════════════════════════════════════
+
+        private void LoadMusicList()
+        {
+            _musicList.Clear();
+            string prefix = "SplashEdit_" + Application.dataPath.GetHashCode().ToString("X8") + "_";
+            int count = EditorPrefs.GetInt(prefix + "MusicCount", 0);
+
+            for (int i = 0; i < count; i++)
+            {
+                string path = EditorPrefs.GetString(prefix + $"Music_{i}", "");
+                if (string.IsNullOrEmpty(path)) continue;
+
+                var asset = AssetDatabase.LoadAssetAtPath<AudioClip>(path);
+                _musicList.Add(new MusicEntry
+                {
+                    asset = asset,
+                    path = path,
+                    name = asset != null ? asset.name : Path.GetFileNameWithoutExtension(path)
+                });
+            }
+        }
+
+        private void SaveMusicList()
+        {
+            string prefix = "SplashEdit_" + Application.dataPath.GetHashCode().ToString("X8") + "_";
+            EditorPrefs.SetInt(prefix + "MusicCount", _musicList.Count);
+
+            for (int i = 0; i < _musicList.Count; i++)
+            {
+                EditorPrefs.SetString(prefix + $"Music_{i}", _musicList[i].path);
+            }
+        }
+
+        private void AddMusicByPath(string path)
+        {
+            // Check for duplicates
+            if (_musicList.Any(s => s.path == path))
+            {
+                Log($"Music already in list: {path}", LogType.Warning);
+                return;
+            }
+
+            var asset = AssetDatabase.LoadAssetAtPath<AudioClip>(path);
+            _musicList.Add(new MusicEntry
+            {
+                asset = asset,
+                path = path,
+                name = asset != null ? asset.name : Path.GetFileNameWithoutExtension(path)
+            });
+            SaveMusicList();
+            Log($"Added music: {Path.GetFileNameWithoutExtension(path)}", LogType.Log);
+        }
+
+        private void HandleMusicDragDrop()
+        {
+            Event evt = Event.current;
+            Rect dropArea = GUILayoutUtility.GetLastRect();
+
+            if (evt.type == EventType.DragUpdated || evt.type == EventType.DragPerform)
+            {
+                if (!dropArea.Contains(evt.mousePosition)) return;
+
+                bool hasClips = DragAndDrop.objectReferences.Any(o => o is AudioClip);
+                if (hasClips)
+                {
+                    DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+
+                    if (evt.type == EventType.DragPerform)
+                    {
+                        DragAndDrop.AcceptDrag();
+                        foreach (var obj in DragAndDrop.objectReferences)
+                        {
+                            if (obj is AudioClip)
+                            {
+                                string path = AssetDatabase.GetAssetPath(obj);
+                                AddMusicByPath(path);
+                            }
+                        }
+                    }
+
+                    evt.Use();
+                }
+            }
+        }
+
 
         // ═══════════════════════════════════════════════════════════════
         // Utilities
