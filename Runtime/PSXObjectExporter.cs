@@ -27,7 +27,7 @@ namespace SplashEdit.RuntimeCode
         public LuaFile LuaFile => luaFile;
 
         [FormerlySerializedAs("IsActive")]
-        [SerializeField] private bool isActive = true;
+        [SerializeField] private bool isActive = true; 
         public bool IsActive => isActive;
 
         public List<PSXTexture2D> Textures { get; set; } = new List<PSXTexture2D>();
@@ -46,11 +46,15 @@ namespace SplashEdit.RuntimeCode
         [Tooltip("Smooth normals for lighting. Disable for flat/faceted shading.")]
         [SerializeField] private bool smoothNormals = true;
 
+        [Tooltip("Mark as platform: all boundary edges of nav regions from this mesh allow walkoff. Agent radius is not enforced at the edges.")]
+        [SerializeField] private bool isPlatform = false;
+
         public PSXBPP BitDepth => bitDepth;
         public PSXCollisionType CollisionType => collisionType;
         public VertexColorMode ColorMode => vertexColorMode;
         public Color32 FlatVertexColor => flatVertexColor;
         public bool SmoothNormals => smoothNormals;
+        public bool IsPlatform => isPlatform;
 
         private readonly Dictionary<(int, PSXBPP), PSXTexture2D> cache = new();
 

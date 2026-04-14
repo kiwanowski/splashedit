@@ -75,6 +75,9 @@ namespace SplashEdit.RuntimeCode
             public int portalStart, portalCount;
             public NavSurfaceType surfaceType;
             public byte roomIndex;
+            public byte flags;             // bit 0 = isPlatform
+            public byte walkoffEdgeMask;   // bit i = edge i allows walkoff
+            public byte boundaryEdgeMask;  // bit i = edge i has no portal neighbor
             public Plane floorPlane;
             public List<Vector3> worldTris = new();
             public List<int> sourceTriIndices = new();
@@ -98,6 +101,12 @@ namespace SplashEdit.RuntimeCode
 
         /// <summary>PSXRoom volumes for spatial room assignment. Set before Build().</summary>
         public PSXRoom[] PSXRooms { get; set; }
+
+        /// <summary>Exporters tagged as platforms. Regions within their bounds get the platform flag.</summary>
+        public PSXObjectExporter[] PlatformExporters { get; set; }
+
+        /// <summary>Walkoff zones. Boundary edges within these volumes allow the player to walk off.</summary>
+        public PSXNavWalkoffZone[] WalkoffZones { get; set; }
 
         public void Build(PSXObjectExporter[] exporters, Vector3 spawn)
         {
@@ -221,6 +230,14 @@ namespace SplashEdit.RuntimeCode
                 var region = new NavRegionExport();
                 var pts3d = new List<Vector3>();
 
+                // Track which edges are boundary (no portal neighbor) before winding reversal
+                bool[] isBoundary = new bool[nv];
+                for (int j = 0; j < nv; j++)
+                {
+                    int neighbor = pmesh.polys[i * 2 * nvp + nvp + j];
+                    isBoundary[j] = (neighbor == RC_MESH_NULL_IDX || (neighbor & 0x8000) != 0);
+                }
+
                 for (int j = 0; j < nv; j++)
                 {
                     int vi = pmesh.polys[i * 2 * nvp + j];
@@ -259,7 +276,22 @@ namespace SplashEdit.RuntimeCode
                 {
                     region.vertsXZ.Reverse();
                     pts3d.Reverse();
+                    // Remap boundary edge flags for reversed vertex order
+                    // Original edge j (v_j to v_{j+1}) maps to reversed edge (nv-2-j+nv)%nv
+                    bool[] reversed = new bool[nv];
+                    for (int j = 0; j < nv; j++)
+                        reversed[(nv - 2 - j + nv) % nv] = isBoundary[j];
+                    isBoundary = reversed;
                 }
+
+                // Build boundary edge bitmask
+                byte boundaryMask = 0;
+                for (int j = 0; j < nv; j++)
+                {
+                    if (isBoundary[j])
+                        boundaryMask |= (byte)(1 << j);
+                }
+                region.boundaryEdgeMask = boundaryMask;
 
                 // Include ALL detail mesh vertices (including interior samples) for
                 // a much better least-squares plane fit on terrain. The detail mesh
@@ -364,7 +396,11 @@ namespace SplashEdit.RuntimeCode
             else
                 AssignRoomsByBFS();
 
-            // 8. Find start region closest to spawn
+            // 8. Apply platform flags and walkoff edge zones
+            ApplyPlatformFlags(exporters);
+            ApplyWalkoffZones();
+
+            // 9. Find start region closest to spawn
             _startRegion = FindClosestRegion(spawn);
         }
 
@@ -555,6 +591,111 @@ namespace SplashEdit.RuntimeCode
             }
         }
 
+        /// <summary>
+        /// Flag nav regions whose centroid lies within the world-space AABB of
+        /// a platform PSXObjectExporter. All boundary edges of platform regions
+        /// get the walkoff bit set.
+        /// </summary>
+        void ApplyPlatformFlags(PSXObjectExporter[] allExporters)
+        {
+            if (PlatformExporters == null || PlatformExporters.Length == 0) return;
+
+            // Build world-space AABB for each platform exporter
+            var platformBounds = new List<Bounds>();
+            foreach (var exp in PlatformExporters)
+            {
+                MeshFilter mf = exp.GetComponent<MeshFilter>();
+                if (mf == null || mf.sharedMesh == null) continue;
+                Bounds local = mf.sharedMesh.bounds;
+                Bounds world = TransformBounds(local, exp.transform);
+                world.Expand(0.1f);
+                platformBounds.Add(world);
+            }
+
+            for (int i = 0; i < _regions.Count; i++)
+            {
+                var reg = _regions[i];
+                float cx = 0, cz = 0;
+                foreach (var v in reg.vertsXZ) { cx += v.x; cz += v.y; }
+                cx /= reg.vertsXZ.Count; cz /= reg.vertsXZ.Count;
+                float cy = EvalY(reg, new Vector2(cx, cz));
+                Vector3 centroid = new Vector3(cx, cy, cz);
+
+                foreach (var bounds in platformBounds)
+                {
+                    if (bounds.Contains(centroid))
+                    {
+                        reg.flags |= 0x01; // isPlatform
+                        reg.walkoffEdgeMask |= reg.boundaryEdgeMask;
+                        break;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// For each nav region boundary edge, check if the edge midpoint lies
+        /// inside any PSXNavWalkoffZone volume. If so, set the walkoff bit for
+        /// that edge so the player can leave through it.
+        /// </summary>
+        void ApplyWalkoffZones()
+        {
+            if (WalkoffZones == null || WalkoffZones.Length == 0) return;
+
+            var zoneBounds = new Bounds[WalkoffZones.Length];
+            for (int z = 0; z < WalkoffZones.Length; z++)
+                zoneBounds[z] = WalkoffZones[z].GetWorldBounds();
+
+            for (int i = 0; i < _regions.Count; i++)
+            {
+                var reg = _regions[i];
+                int nv = reg.vertsXZ.Count;
+                for (int j = 0; j < nv; j++)
+                {
+                    // Only boundary edges can be walkoff
+                    if ((reg.boundaryEdgeMask & (1 << j)) == 0) continue;
+
+                    int next = (j + 1) % nv;
+                    Vector2 mid2D = (reg.vertsXZ[j] + reg.vertsXZ[next]) * 0.5f;
+                    float midY = EvalY(reg, mid2D);
+                    Vector3 mid3D = new Vector3(mid2D.x, midY, mid2D.y);
+
+                    foreach (var zb in zoneBounds)
+                    {
+                        if (zb.Contains(mid3D))
+                        {
+                            reg.walkoffEdgeMask |= (byte)(1 << j);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        static Bounds TransformBounds(Bounds local, Transform t)
+        {
+            Vector3 ext = local.extents;
+            Vector3 center = local.center;
+            Vector3 wMin = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            Vector3 wMax = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 corner = center + new Vector3(
+                    (i & 1) != 0 ? ext.x : -ext.x,
+                    (i & 2) != 0 ? ext.y : -ext.y,
+                    (i & 4) != 0 ? ext.z : -ext.z
+                );
+                Vector3 w = t.TransformPoint(corner);
+                wMin = Vector3.Min(wMin, w);
+                wMax = Vector3.Max(wMax, w);
+            }
+
+            Bounds b = new Bounds();
+            b.SetMinMax(wMin, wMax);
+            return b;
+        }
+
         public void WriteToBinary(BinaryWriter writer, float gteScaling)
         {
             writer.Write((ushort)_regions.Count);
@@ -575,8 +716,8 @@ namespace SplashEdit.RuntimeCode
                 writer.Write((byte)r.vertsXZ.Count);
                 writer.Write((byte)r.surfaceType);
                 writer.Write(r.roomIndex);
-                writer.Write((byte)0);
-                writer.Write((byte)0);
+                writer.Write(r.flags);
+                writer.Write(r.walkoffEdgeMask);
             }
             foreach (var p in _portals)
             {

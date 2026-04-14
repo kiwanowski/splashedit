@@ -291,6 +291,21 @@ namespace SplashEdit.RuntimeCode
             // matches the PSXRoomBuilder room indices used by the renderer.
             if (rooms != null && rooms.Length > 0)
                 _navRegionBuilder.PSXRooms = rooms;
+
+            // Collect platform exporters and walkoff zones for nav region flagging
+            var platformList = new System.Collections.Generic.List<PSXObjectExporter>();
+            foreach (var exp in _exporters)
+            {
+                if (exp.IsPlatform)
+                    platformList.Add(exp);
+            }
+            if (platformList.Count > 0)
+                _navRegionBuilder.PlatformExporters = platformList.ToArray();
+
+            PSXNavWalkoffZone[] walkoffZones = FindObjectsByType<PSXNavWalkoffZone>(FindObjectsSortMode.None);
+            if (walkoffZones != null && walkoffZones.Length > 0)
+                _navRegionBuilder.WalkoffZones = walkoffZones;
+
             _navRegionBuilder.Build(_exporters, _playerPos);
             if (_navRegionBuilder.RegionCount == 0)
                 Debug.LogWarning("No nav regions! Enable 'Generate Navigation' on your floor meshes.");
