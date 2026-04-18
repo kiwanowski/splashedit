@@ -27,7 +27,7 @@ namespace SplashEdit.EditorCode
         // ───── UI State ─────
         private Vector2 _scrollPos;
         private int _selectedTab = 0;
-        private static readonly string[] _tabNames = { "Dependencies", "Scenes", "Music (CD-DA)" , "Build"};
+        private static readonly string[] _tabNames = { "Dependencies", "Scenes", "Music (CD-DA)", "Build" };
         private bool _showNativeProject = true;
         private bool _showToolchainSection = true;
         private bool _showScenesSection = true;
@@ -631,6 +631,8 @@ namespace SplashEdit.EditorCode
             if (!_showMusicSection) return;
 
             EditorGUILayout.BeginVertical(PSXEditorStyles.CardStyle);
+            GUILayout.Label( "Please note that CD-DA music works only if you perform an ISO build",
+                                PSXEditorStyles.InfoBox);
 
             if (_musicList.Count == 0)
             {
@@ -1833,7 +1835,7 @@ namespace SplashEdit.EditorCode
 
             if (SplashSettings.MemoryOverlay)
                 buildArg += " MEMOVERLAY=1";
-            
+
             if (SplashSettings.FpsOverlay)
                 buildArg += " FPSOVERLAY=1";
 
@@ -2015,8 +2017,10 @@ namespace SplashEdit.EditorCode
             {
                 _emulatorProcess = Process.Start(psi);
                 _emulatorProcess.EnableRaisingEvents = true;
-                _emulatorProcess.Exited += (s, e) => {
-                    EditorApplication.delayCall += () => {
+                _emulatorProcess.Exited += (s, e) =>
+                {
+                    EditorApplication.delayCall += () =>
+                    {
                         _isRunning = false;
                         _emulatorProcess = null;
                         PSXConsoleWindow.Detach();
@@ -2306,7 +2310,7 @@ namespace SplashEdit.EditorCode
 
                 if (_musicList.Count > 0)
                 {
-                    foreach(MusicEntry music in _musicList)
+                    foreach (MusicEntry music in _musicList)
                     {
                         string musicPath = Path.Combine(SplashBuildPaths.ProjectRoot, music.path);
                         xml.AppendLine($"  <track type=\"audio\" source=\"{EscapeXml(musicPath)}\"/>");
