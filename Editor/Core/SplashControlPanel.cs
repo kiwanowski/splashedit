@@ -800,6 +800,10 @@ namespace SplashEdit.EditorCode
                 new GUIContent("Room Debug Overlay", "Render ALL room triangles in per-room colors on top of the scene for culling diagnosis"),
                 SplashSettings.RoomDebugOverlay);
 
+            SplashSettings.ProfilerOverlay = EditorGUILayout.Toggle(
+                new GUIContent("Profiler Overlay", "Show a per-frame pie chart with timing breakdown for major runtime systems"),
+                SplashSettings.ProfilerOverlay);
+
             SplashSettings.OtSize = EditorGUILayout.IntField(
                 new GUIContent("OT Size", "Ordering table entries. Lower = less RAM, shallower Z-sorting."),
                 SplashSettings.OtSize);
@@ -1841,6 +1845,9 @@ namespace SplashEdit.EditorCode
 
             if (SplashSettings.RoomDebugOverlay)
                 buildArg += " ROOMDEBUG=1";
+
+            if (SplashSettings.ProfilerOverlay)
+                buildArg += " PROFILER=1";
 
             buildArg += $" OT_SIZE={SplashSettings.OtSize} BUMP_SIZE={SplashSettings.BumpSize}";
 
